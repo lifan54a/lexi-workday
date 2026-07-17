@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lexi's workday · 排期台</title>
+  <meta name="description" content="Lexi's workday —— 每日待办排期，自动汇总周报。" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="30" height="30">
+          <rect x="2" y="2" width="28" height="28" rx="8" fill="var(--blue)" />
+          <path d="M10 16.6l4.2 4.2L22 11.4" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <div class="brand-text">
+        <h1>Lexi's workday</h1>
+        <p>排期台 · 待办 &amp; 周报</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="themeToggle" class="icon-btn" type="button" aria-label="切换明暗主题" title="切换主题">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="主导航">
+    <button class="tab is-active" role="tab" aria-selected="true" aria-controls="view-home" id="tab-home" data-view="home">🏠 首页</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-daily" id="tab-daily" data-view="daily">每日记录</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-weekly" id="tab-weekly" data-view="weekly">周报生成</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-month" id="tab-month" data-view="month">月度视图</button>
+  </nav>
+
+  <main class="container">
+
+    <!-- ============ 首页（Editorial Magazine Cover） ============ -->
+    <section id="view-home" class="view is-active" role="tabpanel" aria-labelledby="tab-home">
+      <div class="hero-editorial">
+
+        <!-- 左上角标签 -->
+        <span class="hero-tag" aria-hidden="true">Create</span>
+
+        <!-- 主内容区：左文字 + 右图片 -->
+        <div class="hero-stage">
+
+          <!-- 左侧：标题区 -->
+          <div class="hero-typography">
+            <h2 class="hero-masthead">Lexi's<br/>workday</h2>
+            <p class="hero-subtitle">SCHEDULE &amp; WEEKLY REPORT</p>
+            <p class="hero-desc">
+              每天记一记，周报自动生成。<br/>
+              掌控节奏，Just do it Vision.
+            </p>
+          </div>
+
+          <!-- 右侧：IP 形象 -->
+          <div class="avatar-stage" id="avatarWrap" title="把鼠标放过来打个招呼 👋">
+            <img src="avatar.png" alt="Lexi" class="avatar-editorial" draggable="false" />
+            <div class="avatar-greet" id="avatarGreet" aria-live="polite">
+              <span class="greet-bubble"></span>
+              <span class="greet-tail"></span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 右下角角色标签 -->
+        <div class="hero-role" aria-hidden="true">
+          <span class="hero-role-title">Designer</span>
+          <span class="hero-role-line">So Just do it<br/>Vision.</span>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============ 每日记录 ============ -->
+    <section id="view-daily" class="view" role="tabpanel" aria-labelledby="tab-daily" hidden>
+      <div class="daily-grid">
+        <!-- 列表 -->
+        <div class="panel list-panel">
+          <div class="list-head">
+            <div class="date-nav">
+              <button class="icon-btn" id="prevDay" type="button" aria-label="前一天">‹</button>
+              <input type="date" id="dayInput" class="date-input" aria-label="选择日期" />
+              <button class="icon-btn" id="nextDay" type="button" aria-label="后一天">›</button>
+            </div>
+            <button class="btn btn-soft" id="todayBtn" type="button">今天</button>
+          </div>
+
+          <div class="day-stats" id="dayStats" aria-live="polite"></div>
+
+          <div class="task-list" id="taskList"></div>
+
+          <div class="empty" id="emptyState" hidden>
+            <div class="empty-mark" aria-hidden="true">📭</div>
+            <p class="empty-title">这一天还没有记录</p>
+            <p class="empty-sub">点击下方「添加任务」，记录今天的第一条待办。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="daily-footer">
+        <button class="btn btn-primary btn-add-task" id="addTaskBtn" type="button">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          添加任务
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ 周报生成 ============ -->
+    <section id="view-weekly" class="view" role="tabpanel" aria-labelledby="tab-weekly" hidden>
+      <div class="weekly-wrap">
+        <div class="week-nav">
+          <button class="icon-btn" id="prevWeek" type="button" aria-label="上一周">‹</button>
+          <div class="week-label" id="weekLabel" aria-live="polite">—</div>
+          <button class="icon-btn" id="nextWeek" type="button" aria-label="下一周">›</button>
+          <button class="btn btn-soft" id="thisWeekBtn" type="button">本周</button>
+        </div>
+
+        <div class="stat-grid" id="weekStats"></div>
+
+        <div class="weekly-cols">
+          <div class="panel">
+            <h3 class="panel-title">按项目汇总</h3>
+            <div id="projectBreakdown" class="breakdown"></div>
+          </div>
+          <div class="panel">
+            <h3 class="panel-title">优先级分布</h3>
+            <div id="urgencyBreakdown" class="breakdown"></div>
+          </div>
+        </div>
+
+        <div class="panel report-panel" id="reportPrint">
+          <div class="report-head">
+            <h3 class="panel-title">周报预览</h3>
+            <div class="report-actions">
+              <input id="userName" class="input input-sm" type="text" placeholder="你的名字（可选）" maxlength="20" />
+              <button class="btn btn-soft" id="copyReport" type="button">复制</button>
+              <button class="btn btn-soft" id="printReport" type="button">打印 / PDF</button>
+            </div>
+          </div>
+          <pre id="reportText" class="report-text"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 月度视图（Gantt 日历） ============ -->
+    <section id="view-month" class="view" role="tabpanel" aria-labelledby="tab-month" hidden>
+      <div class="month-wrap">
+        <div class="month-nav">
+          <button class="icon-btn" id="prevMonth" type="button" aria-label="上一月">‹</button>
+          <div class="month-label" id="monthLabel" aria-live="polite">—</div>
+          <button class="icon-btn" id="nextMonth" type="button" aria-label="下一月">›</button>
+          <button class="btn btn-soft" id="thisMonthBtn" type="button">本月</button>
+        </div>
+
+        <div class="panel month-gantt-panel">
+          <div class="month-gantt-scroll">
+            <div class="month-gantt" id="monthGantt"></div>
+          </div>
+          <div class="month-foot">
+            <div class="gantt-legend">
+              <span class="lg"><i class="lg-dot"></i>进行中</span>
+              <span class="lg"><i class="lg-dot lg-done"></i>已完成</span>
+              <span class="lg"><i class="lg-diamond"></i>Deline</span>
+            </div>
+            <p class="month-hint">横条长度 = 项目当月工期；悬停查看起止与状态。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ 新增 / 编辑任务弹窗 ============ -->
+  <div class="modal-overlay" id="taskModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <h2 class="panel-title" id="modalTitle">新增任务</h2>
+        <button class="icon-btn" id="modalClose" type="button" aria-label="关闭">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <form id="taskForm" autocomplete="off">
+        <input type="hidden" id="editingId" />
+
+        <div class="field">
+          <label for="project">项目名称</label>
+          <input id="project" class="input" type="text" placeholder="例如：排期台前端开发" required maxlength="60" />
+        </div>
+
+        <div class="field">
+          <span class="field-label" id="urgencyLabel">紧急程度</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="urgencyLabel">
+            <button type="button" class="seg" data-urgency="high" role="radio" aria-checked="false">高</button>
+            <button type="button" class="seg is-active" data-urgency="medium" role="radio" aria-checked="true">中</button>
+            <button type="button" class="seg" data-urgency="low" role="radio" aria-checked="false">低</button>
+          </div>
+          <input type="hidden" id="urgency" value="medium" />
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="hours">耗时（小时）</label>
+            <input id="hours" class="input" type="number" min="0" max="24" step="0.5" value="1" required />
+          </div>
+          <div class="field">
+            <span class="field-label">进度</span>
+            <div class="progress-field">
+              <input id="progress" class="range" type="range" min="0" max="100" step="5" value="0" aria-label="进度百分比" />
+              <output id="progressOut" for="progress">0%</output>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="startDate">开始日期</label>
+            <input id="startDate" class="input" type="date" />
+          </div>
+          <div class="field">
+            <label for="duration">持续天数</label>
+            <input id="duration" class="input" type="number" min="1" max="365" step="1" value="1" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="reviewDate">Deline（截止时间，可选）</label>
+          <input id="reviewDate" class="input" type="date" />
+        </div>
+
+        <div class="field">
+          <label for="notes">备注</label>
+          <textarea id="notes" class="input textarea" rows="3" placeholder="进展、阻塞、风险…" maxlength="300"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="reqDoc">需求文档（链接，可选）</label>
+          <input id="reqDoc" class="input" type="url" placeholder="https://…" maxlength="500" />
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="submitBtn">添加任务</button>
+          <button type="button" class="btn btn-ghost" id="cancelEdit" hidden>取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
