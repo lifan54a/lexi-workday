@@ -1,0 +1,5 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lexi-workday",
+  "account_id": "b373e6c20e89263b92c525a254cd88e0"
+}
