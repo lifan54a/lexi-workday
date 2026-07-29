@@ -553,13 +553,24 @@ input[type="date"].input { font-family: var(--font-num); }
   isolation: isolate;
 }
 
-/* Interactive PixelBlast canvas is mounted here by the React shell. */
-#pixelblast-background {
+/* Interactive PixelBlast background: React shell locally, static WebGL on EdgeOne. */
+#pixelblast-background,
+.pixelblast-static {
   opacity: .7;
 }
 
+.pixelblast-static {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  #pixelblast-background { opacity: .35; }
+  #pixelblast-background,
+  .pixelblast-static { opacity: .35; }
 }
 
 /* 左上角小标签 */
