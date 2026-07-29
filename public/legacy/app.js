@@ -8,6 +8,7 @@
 
   /* -------------------- 常量与存储 -------------------- */
   const STORE_KEY = "paqi_tasks_v1";
+  const SYNC_KEY  = "paqi_cloud_sync_v1";
   const THEME_KEY = "paqi_theme";
   const NAME_KEY  = "paqi_name";
 
@@ -113,27 +114,95 @@
       return Array.isArray(arr) ? arr : [];
     } catch (e) { return []; }
   }
+
+  function cacheTasks(nextTasks) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(nextTasks)); } catch (e) {}
+  }
+
+  function readSyncMarker() {
+    try { return localStorage.getItem(SYNC_KEY) || ""; } catch (e) { return ""; }
+  }
+
+  function writeSyncMarker(updatedAt) {
+    try { localStorage.setItem(SYNC_KEY, updatedAt || new Date().toISOString()); } catch (e) {}
+  }
+
+  function redirectToLogin() {
+    window.location.replace("/login");
+  }
+
+  async function cloudRequest(options = {}) {
+    const response = await fetch("/api/tasks", {
+      cache: "no-store",
+      credentials: "same-origin",
+      ...options,
+    });
+    if (response.status === 401) {
+      redirectToLogin();
+      throw new Error("unauthorized");
+    }
+    if (!response.ok) throw new Error(`cloud unavailable (${response.status})`);
+    return response.json();
+  }
+
+  let syncQueue = Promise.resolve();
+
+  function syncTasks(nextTasks, { announce = false } = {}) {
+    const snapshot = JSON.parse(JSON.stringify(nextTasks));
+    syncQueue = syncQueue
+      .catch(() => {})
+      .then(async () => {
+        const data = await cloudRequest({
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tasks: snapshot }),
+        });
+        writeSyncMarker(data.updatedAt);
+        if (announce) toast("本机任务已安全同步到云端");
+        return data;
+      })
+      .catch((error) => {
+        if (error.message !== "unauthorized") {
+          toast("云端同步失败，数据仍安全保存在本机");
+        }
+        return null;
+      });
+    return syncQueue;
+  }
+
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); } catch (e) {}
-    fetch("/api/tasks", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tasks }),
-    }).catch(() => toast("云端同步暂时失败，数据已保存在本机并会稍后重试"));
+    cacheTasks(tasks);
+    syncTasks(tasks);
   }
 
   async function loadCloudTasks() {
     try {
-      const response = await fetch("/api/tasks", { cache: "no-store" });
-      if (!response.ok) throw new Error("cloud unavailable");
-      const data = await response.json();
-      if (Array.isArray(data.tasks)) {
-        tasks = data.tasks;
-        localStorage.setItem(STORE_KEY, JSON.stringify(tasks));
+      const bootstrap = window.__lexiCloudTasksPromise;
+      const data = bootstrap ? await bootstrap : await cloudRequest();
+      if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
+
+      const cloudTasks = data.tasks;
+      const localTasks = tasks.slice();
+      const needsLegacyMigration = localTasks.length > 0 && !readSyncMarker();
+
+      if (needsLegacyMigration) {
+        const merged = new Map(cloudTasks.map((task) => [task.id, task]));
+        localTasks.forEach((task) => merged.set(task.id, task));
+        tasks = Array.from(merged.values());
+        cacheTasks(tasks);
         renderDaily();
+        await syncTasks(tasks, { announce: true });
+        return;
       }
+
+      tasks = cloudTasks;
+      cacheTasks(tasks);
+      if (data.updatedAt) writeSyncMarker(data.updatedAt);
+      renderDaily();
     } catch (e) {
-      toast("当前使用本机缓存，联网后将同步到云端");
+      if (e.message !== "unauthorized") {
+        toast("当前使用本机缓存，恢复连接后可继续同步");
+      }
     }
   }
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
