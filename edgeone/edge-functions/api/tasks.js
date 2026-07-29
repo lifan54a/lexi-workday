@@ -34,7 +34,7 @@ function safeEqual(left, right) {
 }
 
 async function isAuthorized(request, env) {
-  if (!env.SESSION_SECRET) return false;
+  if (!env?.SESSION_SECRET) return false;
   const cookie = request.headers.get("cookie") ?? "";
   const actual = cookie.match(/(?:^|;\s*)lexi_session=([^;]+)/)?.[1] ?? "";
   const expected = await createSessionToken(env.SESSION_SECRET);
@@ -42,9 +42,12 @@ async function isAuthorized(request, env) {
 }
 
 function json(body, status = 200) {
-  return Response.json(body, {
+  return new Response(JSON.stringify(body), {
     status,
-    headers: { "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
 }
 
