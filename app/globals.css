@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../public/legacy/styles.css";
 
 :root {
   --background: #ffffff;
@@ -20,7 +21,16 @@
 }
 
 body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.legacy-load-error {
+  margin: 15vh auto;
+  max-width: 32rem;
+  padding: 2rem;
+  color: #b42318;
+  text-align: center;
 }

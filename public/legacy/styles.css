@@ -553,6 +553,15 @@ input[type="date"].input { font-family: var(--font-num); }
   isolation: isolate;
 }
 
+/* Interactive PixelBlast canvas is mounted here by the React shell. */
+#pixelblast-background {
+  opacity: .7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pixelblast-background { opacity: .35; }
+}
+
 /* 左上角小标签 */
 .hero-tag {
   position: absolute;
@@ -632,6 +641,8 @@ input[type="date"].input { font-family: var(--font-num); }
 /* 打招呼气泡（hover 头像时出现） */
 .avatar-greet {
   position: absolute;
+  display: flex;
+  align-items: center;
   top: 8px;
   right: calc(100% + 16px);
   z-index: 3;
@@ -655,13 +666,16 @@ input[type="date"].input { font-family: var(--font-num); }
 }
 .greet-tail {
   position: absolute;
-  right: -7px; top: 18px;
-  width: 14px; height: 14px;
+  right: -6px;
+  top: calc(50% - 6px);
+  width: 12px;
+  height: 12px;
   background: var(--surface);
+  border-top: 1px solid var(--sep);
   border-right: 1px solid var(--sep);
-  border-bottom: 1px solid var(--sep);
   transform: rotate(45deg);
-  border-radius: 0 0 4px 0;
+  border-radius: 0 3px 0 0;
+  z-index: 2;
 }
 
 /* 右下角角色标签 */
@@ -699,9 +713,11 @@ input[type="date"].input { font-family: var(--font-num); }
   }
   .avatar-stage:hover .avatar-greet { transform: translateX(-50%) translateY(0) scale(1); }
   .greet-tail {
-    right: auto; left: 50%; margin-left: -7px;
-    top: auto; bottom: -7px;
-    transform: rotate(225deg);
+    right: auto;
+    left: calc(50% - 6px);
+    top: auto;
+    bottom: -6px;
+    transform: rotate(135deg);
   }
 }
 
