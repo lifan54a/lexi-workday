@@ -882,8 +882,8 @@
     "下一次尝试会更接近答案。",
   ];
   let greetIdx = -1;
-  els.avatarWrap?.addEventListener("mouseenter", () => {
-    const bubble = els.avatarGreet.querySelector(".greet-bubble");
+  function showNextGreeting() {
+    const bubble = els.avatarGreet?.querySelector(".greet-bubble");
     if (bubble) {
       let nextIdx;
       do {
@@ -892,6 +892,11 @@
       greetIdx = nextIdx;
       bubble.textContent = greetTexts[greetIdx];
     }
+  }
+
+  els.avatarWrap?.addEventListener("mouseenter", showNextGreeting, { passive: true });
+  els.avatarWrap?.addEventListener("pointerup", (event) => {
+    if (event.pointerType !== "mouse") showNextGreeting();
   }, { passive: true });
 
   (function init() {
