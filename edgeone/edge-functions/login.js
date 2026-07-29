@@ -8,22 +8,30 @@ function loginPage(invalid = false) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Lexi's workday · 登录</title>
   <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f1eb;color:#222;font:16px system-ui,sans-serif}
+    body{margin:0;min-height:100vh;display:grid;grid-template-rows:1fr auto;background:#f4f1eb;color:#222;font:16px system-ui,sans-serif}
+    main{display:grid;place-items:center;padding:24px}
     .card{width:min(360px,calc(100% - 48px));padding:32px;border-radius:20px;background:#fff;box-shadow:0 16px 50px #0001}
     h1{margin:0 0 8px;font-size:24px}p{color:#666}
     input,button{box-sizing:border-box;width:100%;padding:12px 14px;border-radius:10px;font:inherit}
     input{margin:14px 0;border:1px solid #ccc}button{border:0;background:#222;color:#fff;cursor:pointer}
     .error{color:#b42318}
+    footer{padding:16px 24px 24px;text-align:center;font-size:13px}
+    footer a{color:#666;text-decoration:none}footer a:hover,footer a:focus-visible{color:#175cd3;text-decoration:underline}
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="/login">
-    <h1>Lexi's workday</h1>
-    <p>请输入访问密码</p>
-    ${invalid ? '<p class="error">密码错误，请重试。</p>' : ""}
-    <input type="password" name="password" autocomplete="current-password" autofocus required>
-    <button type="submit">进入排期台</button>
-  </form>
+  <main>
+    <form class="card" method="post" action="/login">
+      <h1>Lexi's workday</h1>
+      <p>请输入访问密码</p>
+      ${invalid ? '<p class="error">密码错误，请重试。</p>' : ""}
+      <input type="password" name="password" autocomplete="current-password" autofocus required>
+      <button type="submit">进入排期台</button>
+    </form>
+  </main>
+  <footer>
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026102963号</a>
+  </footer>
 </body>
 </html>`;
 }

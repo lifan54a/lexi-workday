@@ -98,17 +98,49 @@ body {
   color: var(--ink);
   line-height: 1.5;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.01em;
+}
+
+.legacy-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 button { font-family: inherit; cursor: pointer; }
 input, textarea, button { font: inherit; color: inherit; }
 
 .container {
+  width: 100%;
+  flex: 1 0 auto;
   max-width: var(--maxw); margin: 0 auto;
   padding: var(--s8) var(--s5) var(--s12);
+}
+
+.site-footer {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: var(--s4) var(--s5) var(--s6);
+  text-align: center;
+  font-size: .8rem;
+  line-height: 1.5;
+}
+
+.icp-link {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color var(--t-fast);
+}
+
+.icp-link:hover,
+.icp-link:focus-visible {
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* ============================ 顶栏 ============================ */
@@ -804,7 +836,7 @@ input[type="date"].input { font-family: var(--font-num); }
 @media print {
   body { background: #fff; }
   .topbar, .tabs, .week-nav, .month-nav, .stat-grid, .weekly-cols, .report-actions, .toast, .mood,
-  .avatar-greet { display: none !important; }
+  .avatar-greet, .site-footer { display: none !important; }
   .container { padding: 0; max-width: none; }
   #view-weekly.view { display: block !important; }
   .panel, .report-panel { box-shadow: none; border: none; padding: 0; }
