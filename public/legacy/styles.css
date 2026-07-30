@@ -873,11 +873,26 @@ input[type="date"].input { font-family: var(--font-num); }
 .modal-head .icon-btn { width: 36px; height: 36px; }
 .modal .field-row > .field { min-width: 0; }
 .modal input[type="date"].input {
+  display: block;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  appearance: none;
-  -webkit-appearance: none;
+  height: 44px;
+  min-height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 42px;
+  appearance: auto;
+  -webkit-appearance: auto;
+}
+.modal input[type="date"].input::-webkit-date-and-time-value {
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+.modal input[type="date"].input::-webkit-datetime-edit {
+  padding: 0;
+  line-height: 42px;
 }
 
 html.modal-open,
