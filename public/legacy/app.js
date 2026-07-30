@@ -480,14 +480,23 @@
   els.cancelEdit.addEventListener("click", () => { resetForm(); hideModal(); });
 
   /* -------------------- 弹窗控制 -------------------- */
+  let modalScrollY = 0;
+
   function showModal() {
+    modalScrollY = window.scrollY;
     els.modal.hidden = false;
-    document.body.style.overflow = "hidden";
+    document.documentElement.classList.add("modal-open");
+    document.body.classList.add("modal-open");
+    document.body.style.top = `-${modalScrollY}px`;
     els.project.focus();
   }
+
   function hideModal() {
     els.modal.hidden = true;
-    document.body.style.overflow = "";
+    document.documentElement.classList.remove("modal-open");
+    document.body.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, modalScrollY);
   }
   els.addTaskBtn.addEventListener("click", () => { resetForm(); showModal(); });
   els.modalClose.addEventListener("click", hideModal);
@@ -895,8 +904,15 @@
   }
 
   els.avatarWrap?.addEventListener("mouseenter", showNextGreeting, { passive: true });
-  els.avatarWrap?.addEventListener("pointerup", (event) => {
-    if (event.pointerType !== "mouse") showNextGreeting();
+  let touchGreetingTimer;
+  els.avatarWrap?.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") return;
+    showNextGreeting();
+    els.avatarWrap.classList.add("is-greeting-visible");
+    window.clearTimeout(touchGreetingTimer);
+    touchGreetingTimer = window.setTimeout(() => {
+      els.avatarWrap?.classList.remove("is-greeting-visible");
+    }, 3500);
   }, { passive: true });
 
   (function init() {
