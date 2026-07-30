@@ -239,12 +239,17 @@ input, textarea, button { font: inherit; color: inherit; }
 .btn-ghost:hover { color: var(--ink); background: var(--surface-2); }
 
 /* ============================ 表单 ============================ */
-.field { margin-bottom: var(--s5); }
-.field-row { display: grid; grid-template-columns: 1fr 1.25fr; gap: var(--s4); }
+.field {
+  min-width: 0;
+  margin-bottom: var(--s5);
+}
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
 .field label, .field-label { display: block; font-size: .82rem; font-weight: 600; color: var(--ink-2); margin-bottom: var(--s2); }
 
 .input {
-  width: 100%; padding: 0 var(--s4); height: 44px;
+  display: block;
+  width: 100%; min-width: 0; max-width: 100%;
+  padding: 0 var(--s4); height: 44px;
   background: var(--surface-2); border: 1px solid var(--sep);
   border-radius: var(--r-md); font-size: .95rem; color: var(--ink);
   transition: border-color var(--t-fast), box-shadow var(--t-fast), background var(--t-fast);
@@ -258,6 +263,7 @@ input[type="date"].input { font-family: var(--font-num); }
 
 /* iOS 分段控件 */
 .segmented {
+  width: 100%; min-width: 0; max-width: 100%;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
   background: var(--surface-2); border: 1px solid var(--sep);
   border-radius: var(--r-md); padding: 2px;
@@ -276,7 +282,10 @@ input[type="date"].input { font-family: var(--font-num); }
 .seg:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
 /* 进度 */
-.progress-field { display: flex; align-items: center; gap: var(--s3); height: 44px; }
+.progress-field {
+  width: 100%; min-width: 0; max-width: 100%;
+  display: flex; align-items: center; gap: var(--s3); height: 44px;
+}
 .range { flex: 1; accent-color: var(--blue); height: 4px; cursor: pointer; }
 .range:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: var(--r-pill); }
 #progressOut { font-family: var(--font-num); font-weight: 600; font-size: .9rem; color: var(--blue); min-width: 44px; text-align: right; }
@@ -862,6 +871,14 @@ input[type="date"].input { font-family: var(--font-num); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s4); }
 .modal-head .panel-title { margin: 0; }
 .modal-head .icon-btn { width: 36px; height: 36px; }
+.modal .field-row > .field { min-width: 0; }
+.modal input[type="date"].input {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+}
 
 html.modal-open,
 body.modal-open {
