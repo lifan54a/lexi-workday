@@ -871,7 +871,16 @@ input[type="date"].input { font-family: var(--font-num); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s4); }
 .modal-head .panel-title { margin: 0; }
 .modal-head .icon-btn { width: 36px; height: 36px; }
+.modal form,
+.modal .field,
 .modal .field-row > .field { min-width: 0; }
+.date-control {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+}
 .modal input[type="date"].input {
   display: block;
   width: 100%;
@@ -886,13 +895,26 @@ input[type="date"].input { font-family: var(--font-num); }
   -webkit-appearance: auto;
 }
 .modal input[type="date"].input::-webkit-date-and-time-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   margin: 0;
   padding: 0;
   text-align: left;
 }
 .modal input[type="date"].input::-webkit-datetime-edit {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   padding: 0;
   line-height: 42px;
+}
+
+@supports (-webkit-touch-callout: none) {
+  .modal input[type="date"].input {
+    width: -webkit-fill-available;
+    max-width: -webkit-fill-available;
+  }
 }
 
 html.modal-open,
@@ -923,6 +945,12 @@ body.modal-open {
   .modal textarea,
   .modal select {
     font-size: 16px;
+  }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) {
+  .modal .field-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
