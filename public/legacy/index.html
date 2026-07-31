@@ -172,11 +172,12 @@
           </div>
           <div class="month-foot">
             <div class="gantt-legend">
-              <span class="lg"><i class="lg-dot"></i>进行中</span>
+              <span class="lg"><i class="lg-dot lg-todo"></i>未开始</span>
+              <span class="lg"><i class="lg-dot lg-doing"></i>进行中</span>
               <span class="lg"><i class="lg-dot lg-done"></i>已完成</span>
               <span class="lg"><i class="lg-diamond"></i>Deline</span>
             </div>
-            <p class="month-hint">横条长度 = 项目当月工期；悬停查看起止与状态。</p>
+            <p class="month-hint" id="monthHint">点击日期可定位当天任务；悬停任务可立即查看详情。</p>
           </div>
         </div>
       </div>
@@ -272,6 +273,7 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="ganttTooltip" class="gantt-tooltip" role="tooltip" hidden></div>
 
   <script src="pixelblast-static.js"></script>
   <script src="app.js"></script>

@@ -482,18 +482,27 @@ input[type="date"].input { font-family: var(--font-num); }
 }
 .gantt-corner .g-slash { color: var(--sep); font-weight: 400; }
 .gantt-day {
+  appearance: none; color: inherit; background: transparent; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px; padding: 7px 0;
+  border: 0;
   border-bottom: 1px solid var(--sep);
   border-left: 1px solid var(--sep-2);
   font-size: .68rem; line-height: 1;
+  transition: background var(--t-fast), box-shadow var(--t-fast);
 }
 .gantt-day .g-wk { color: var(--muted); font-size: .6rem; }
 .gantt-day .g-num { font-family: var(--font-num); font-weight: 600; color: var(--ink-2); }
 .gantt-day.is-weekend { background: var(--surface-2); }
 .gantt-day.is-weekend .g-num { color: var(--muted); }
+.gantt-day:hover { background: var(--orange-bg); }
+.gantt-day:focus-visible { position: relative; z-index: 7; outline: 2px solid var(--orange); outline-offset: -2px; }
 .gantt-day.is-today { background: var(--blue); }
 .gantt-day.is-today .g-wk, .gantt-day.is-today .g-num { color: #fff; }
+.gantt-day.is-selected { background: var(--orange-bg); box-shadow: inset 0 0 0 1px var(--orange); }
+.gantt-day.is-selected .g-wk, .gantt-day.is-selected .g-num { color: var(--orange); }
+.gantt-day.is-today.is-selected { background: var(--blue); box-shadow: inset 0 0 0 1px var(--orange); }
+.gantt-day.is-today.is-selected .g-wk, .gantt-day.is-today.is-selected .g-num { color: #fff; }
 
 /* 行 */
 .gantt-body { position: relative; }
@@ -538,8 +547,14 @@ input[type="date"].input { font-family: var(--font-num); }
 }
 .gantt-bar:hover { filter: brightness(1.08); transform: translateY(-50%) scale(1.02); z-index: 3; }
 .gantt-bar .gb-name { overflow: hidden; text-overflow: ellipsis; }
-.gantt-bar.is-done { opacity: .55; filter: grayscale(.55); }
+.gantt-bar.is-todo { background: var(--muted); }
+.gantt-bar.is-doing { background: var(--blue); }
+.gantt-bar.is-done { background: var(--green); }
 .gantt-bar.is-done::before { content: "\2713"; margin-right: 4px; font-weight: 700; }
+.gantt-body.has-date-selection .gantt-bar:not(.is-on-selected-day) { opacity: .24; }
+.gantt-body.has-date-selection:not(.is-today-selection) .gantt-bar.is-on-selected-day:not(.is-doing) {
+  box-shadow: inset 0 0 0 1px var(--orange);
+}
 
 /* Deline 标记 */
 .gantt-review {
@@ -556,6 +571,13 @@ input[type="date"].input { font-family: var(--font-num); }
   z-index: 1; pointer-events: none;
 }
 
+/* 用户点击定位的日期：橙色虚线，与蓝色“今天”明确区分 */
+.gantt-selected {
+  position: absolute; top: 0; bottom: 0;
+  width: 0; border-left: 1px dashed var(--orange);
+  z-index: 1; pointer-events: none;
+}
+
 /* 空状态 */
 .gantt-empty { padding: var(--s12) var(--s4); text-align: center; color: var(--muted); }
 .gantt-empty .empty-mark { font-size: 2rem; opacity: .4; margin-bottom: var(--s3); }
@@ -569,10 +591,29 @@ input[type="date"].input { font-family: var(--font-num); }
 }
 .gantt-legend { display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap; }
 .lg { display: inline-flex; align-items: center; gap: 6px; font-size: .76rem; color: var(--ink-2); }
-.lg-dot { width: 22px; height: 10px; border-radius: 5px; background: var(--blue); display: inline-block; }
-.lg-dot.lg-done { background: var(--muted); opacity: .6; }
+.lg-dot { width: 22px; height: 10px; border-radius: 5px; display: inline-block; }
+.lg-dot.lg-todo { background: var(--muted); }
+.lg-dot.lg-doing { background: var(--blue); }
+.lg-dot.lg-done { background: var(--green); }
 .lg-diamond { width: 9px; height: 9px; background: #fff; border: 2px solid var(--ink-2); border-radius: 2px; transform: rotate(45deg); display: inline-block; }
 .month-hint { font-size: .76rem; color: var(--muted); margin: 0; }
+
+/* 即时任务提示，替代浏览器有延迟的原生 title */
+.gantt-tooltip {
+  position: fixed; z-index: 1200;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 9px 11px;
+  color: #fff; background: rgba(29, 29, 31, .94);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 9px;
+  box-shadow: var(--shadow-md);
+  font-size: .75rem; line-height: 1.5;
+  white-space: pre-line;
+  pointer-events: none;
+  animation: ganttTooltipIn 90ms ease-out;
+}
+.gantt-tooltip[hidden] { display: none; }
+@keyframes ganttTooltipIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 
 /* ============================ 首页（编辑杂志风封面） ============================ */
 .hero-editorial {

@@ -58,12 +58,11 @@
   // 兼容旧数据（仅有 date 字段）：startDate 缺省用 date，duration 缺省 1 天
   const startDateOf = (t) => t.startDate || t.date || toISO(new Date());
   const endDateOf = (t) => toISO(addDays(fromISO(startDateOf(t)), Math.max(1, t.duration || 1) - 1));
-  function daysOf(t) {
-    const s = fromISO(startDateOf(t));
-    const n = Math.max(1, t.duration || 1);
-    const a = [];
-    for (let i = 0; i < n; i++) a.push(toISO(addDays(s, i)));
-    return a;
+  function timelineEndDateOf(t) {
+    const plannedEnd = endDateOf(t);
+    const todayISO = toISO(new Date());
+    const isActive = Number(t.progress || 0) < 100 && startDateOf(t) <= todayISO;
+    return isActive && plannedEnd < todayISO ? todayISO : plannedEnd;
   }
   const spansOn = (t, iso) => iso >= startDateOf(t) && iso <= endDateOf(t);
   function statusOf(t) {
@@ -77,6 +76,7 @@
   let selectedDate = new Date();
   let weekBase = getMonday(new Date()); // 当前周周一
   let monthBase = new Date();           // 当前展示月份（任意一天即可）
+  let selectedMonthISO = "";            // 月度视图中用户主动定位的日期
   let editingId = null;
   let currentUrgency = "medium";
   const expandedIds = new Set(); // 已展开详情（备注/需求文档）的任务 id
@@ -101,7 +101,8 @@
     tabs: Array.from(document.querySelectorAll(".tab")),
     views: { home: $("view-home"), daily: $("view-daily"), weekly: $("view-weekly"), month: $("view-month") },
     prevMonth: $("prevMonth"), nextMonth: $("nextMonth"), thisMonthBtn: $("thisMonthBtn"),
-    monthLabel: $("monthLabel"), monthGantt: $("monthGantt"),
+    monthLabel: $("monthLabel"), monthGantt: $("monthGantt"), monthHint: $("monthHint"),
+    ganttTooltip: $("ganttTooltip"),
     /* 首页 */
     avatarWrap: $("avatarWrap"), avatarGreet: $("avatarGreet"),
   };
@@ -516,21 +517,32 @@
      ============================================================ */
   /* 月视图辅助：解析 ISO 的“日” */
   function parseDay(iso) { return parseInt(String(iso).slice(8, 10), 10); }
-  /* 任务在月内首个可见日（起始日早于本月则记为 1） */
-  function dayOfInMonth(iso) { return Math.max(1, parseDay(iso)); }
+  function visibleDaysInclusive(startISO, endISO) {
+    let count = 0;
+    let cursor = fromISO(startISO);
+    while (toISO(cursor) <= endISO) {
+      count += 1;
+      cursor = addDays(cursor, 1);
+    }
+    return count;
+  }
 
   function ganttCornerHTML() {
     return `<div class="gantt-corner">项目 <span class="g-slash">/</span> 日期</div>`;
   }
-  function ganttDayCellsHTML(y, m, daysInMonth, todayInMonth, todayDay) {
+  function ganttDayCellsHTML(y, m, daysInMonth, todayInMonth, todayDay, selectedDay, isTodaySelection) {
     const wk = ["日", "一", "二", "三", "四", "五", "六"];
     let out = "";
     for (let d = 1; d <= daysInMonth; d++) {
       const wd = new Date(y, m, d).getDay();
       const isWe = (wd === 0 || wd === 6);
       const isTo = (todayInMonth && d === todayDay);
-      out += `<div class="gantt-day${isWe ? " is-weekend" : ""}${isTo ? " is-today" : ""}">`
-        + `<span class="g-wk">${wk[wd]}</span><span class="g-num">${d}</span></div>`;
+      const isSelected = d === selectedDay;
+      const showSelectedAccent = isSelected && !isTodaySelection;
+      const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      out += `<button type="button" class="gantt-day${isWe ? " is-weekend" : ""}${isTo ? " is-today" : ""}${showSelectedAccent ? " is-selected" : ""}"`
+        + ` data-date="${iso}" aria-label="${m + 1}月${d}日，定位当天任务" aria-pressed="${isSelected ? "true" : "false"}">`
+        + `<span class="g-wk">${wk[wd]}</span><span class="g-num">${d}</span></button>`;
     }
     return out;
   }
@@ -549,25 +561,32 @@
     const pad = (n) => String(n).padStart(2, "0");
     const monthStartISO = `${y}-${pad(m + 1)}-01`;
     const monthEndISO = `${y}-${pad(m + 1)}-${pad(daysInMonth)}`;
+    const selectedDay = selectedMonthISO >= monthStartISO && selectedMonthISO <= monthEndISO
+      ? parseDay(selectedMonthISO)
+      : 0;
+    const isTodaySelection = Boolean(selectedDay && selectedMonthISO === toISO(today));
 
     // 收集当月有交集的任务（去重）
     const seen = new Set();
     const monthTasks = [];
     tasks.forEach((t) => {
       if (seen.has(t.id)) return;
-      if (endDateOf(t) >= monthStartISO && startDateOf(t) <= monthEndISO) {
+      if (timelineEndDateOf(t) >= monthStartISO && startDateOf(t) <= monthEndISO) {
         seen.add(t.id);
         monthTasks.push(t);
       }
     });
 
-    const headHTML = `<div class="gantt-head gantt-grid">${ganttCornerHTML()}${ganttDayCellsHTML(y, m, daysInMonth, todayInMonth, todayDay)}</div>`;
+    const headHTML = `<div class="gantt-head gantt-grid">${ganttCornerHTML()}${ganttDayCellsHTML(y, m, daysInMonth, todayInMonth, todayDay, selectedDay, isTodaySelection)}</div>`;
 
     if (monthTasks.length === 0) {
       els.monthGantt.style.setProperty("--days", daysInMonth);
       els.monthGantt.innerHTML = headHTML
         + `<div class="gantt-empty"><div class="empty-mark" aria-hidden="true">📭</div>`
         + `<p>本月还没有记录，去「每日记录」添加任务吧。</p></div>`;
+      els.monthHint.textContent = selectedDay
+        ? `已定位 ${m + 1}月${selectedDay}日 · 当天没有任务`
+        : "点击日期可定位当天任务；悬停任务可立即查看详情。";
       return;
     }
 
@@ -575,29 +594,43 @@
     const projMap = {};
     monthTasks.forEach((t) => { (projMap[t.project] = projMap[t.project] || []).push(t); });
     const projKeys = Object.keys(projMap).sort((a, b) => {
-      const sa = Math.min(...projMap[a].map((t) => dayOfInMonth(startDateOf(t))));
-      const sb = Math.min(...projMap[b].map((t) => dayOfInMonth(startDateOf(t))));
-      return sa - sb;
+      const sa = projMap[a].map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
+      const sb = projMap[b].map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
+      return sa.localeCompare(sb);
     });
 
     const rows = projKeys.map((p) => {
       const arr = projMap[p];
       const c = projectColor(p);
-      const monthDays = arr.reduce((n, t) => n + daysOf(t).filter((d) => d >= monthStartISO && d <= monthEndISO).length, 0);
+      const monthDays = arr.reduce((n, t) => {
+        const visibleStart = startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t);
+        const taskEnd = timelineEndDateOf(t);
+        const visibleEnd = taskEnd > monthEndISO ? monthEndISO : taskEnd;
+        return n + visibleDaysInclusive(visibleStart, visibleEnd);
+      }, 0);
 
       // 每个任务一条横条，按在月内的起止定位
       const bars = arr.map((t) => {
-        const sd = startDateOf(t), ed = endDateOf(t);
-        const s = Math.max(1, Math.min(daysInMonth, parseDay(sd)));
-        const e = Math.max(1, Math.min(daysInMonth, parseDay(ed)));
+        const sd = startDateOf(t);
+        const plannedEnd = endDateOf(t);
+        const ed = timelineEndDateOf(t);
+        const visibleStart = sd < monthStartISO ? monthStartISO : sd;
+        const visibleEnd = ed > monthEndISO ? monthEndISO : ed;
+        const s = parseDay(visibleStart);
+        const e = parseDay(visibleEnd);
         const left = (s - 1) / daysInMonth * 100;
         const width = (e - s + 1) / daysInMonth * 100;
         const stKey = statusOf(t);
-        const done = stKey === "done";
-        const title = `${t.project}\n${fmtMD(sd)} – ${fmtMD(ed)}\n状态：${STATUS[stKey].label}`
+        const isOnSelectedDay = selectedMonthISO && selectedMonthISO >= sd && selectedMonthISO <= ed;
+        const rangeText = ed !== plannedEnd
+          ? `${fmtMD(sd)} – ${fmtMD(plannedEnd)}（进行中，已延续至 ${fmtMD(ed)}）`
+          : `${fmtMD(sd)} – ${fmtMD(ed)}`;
+        const tooltip = `${t.project}\n${rangeText}\n状态：${STATUS[stKey].label}`
           + (t.reviewDate ? ` · Deline ${fmtMD(t.reviewDate)}` : "");
         const name = width > 9 ? `<span class="gb-name">${escapeHTML(t.project)}</span>` : "";
-        return `<div class="gantt-bar${done ? " is-done" : ""}" style="left:${left}%;width:${width}%;background:${c}" title="${escapeHTML(title)}">${name}</div>`;
+        return `<div class="gantt-bar is-${stKey}${isOnSelectedDay ? " is-on-selected-day" : ""}"`
+          + ` style="left:${left}%;width:${width}%" data-tooltip="${escapeHTML(tooltip)}"`
+          + ` aria-label="${escapeHTML(tooltip)}" tabindex="0">${name}</div>`;
       }).join("");
 
       // Deline 标记（仅显示在月内者）
@@ -615,16 +648,75 @@
     }).join("");
 
     const todayLine = todayInMonth
-      ? `<div class="gantt-today" style="left:calc(var(--label-w) + ${(todayDay - 1) / daysInMonth} * (100% - var(--label-w)))"></div>`
+      ? `<div class="gantt-today" style="left:calc(var(--label-w) + ${(todayDay - 0.5) / daysInMonth} * (100% - var(--label-w)))"></div>`
       : "";
+    const selectedLine = selectedDay && !isTodaySelection
+      ? `<div class="gantt-selected" style="left:calc(var(--label-w) + ${(selectedDay - 0.5) / daysInMonth} * (100% - var(--label-w)))"></div>`
+      : "";
+    const selectedTaskCount = selectedDay
+      ? monthTasks.filter((t) => selectedMonthISO >= startDateOf(t) && selectedMonthISO <= timelineEndDateOf(t)).length
+      : 0;
 
     els.monthGantt.style.setProperty("--days", daysInMonth);
-    els.monthGantt.innerHTML = headHTML + `<div class="gantt-body">${todayLine}${rows}</div>`;
+    els.monthGantt.innerHTML = headHTML
+      + `<div class="gantt-body${selectedDay ? " has-date-selection" : ""}${isTodaySelection ? " is-today-selection" : ""}">${todayLine}${selectedLine}${rows}</div>`;
+    els.monthHint.textContent = selectedDay
+      ? `已定位 ${m + 1}月${selectedDay}日 · ${selectedTaskCount} 项任务`
+      : "点击日期可定位当天任务；悬停任务可立即查看详情。";
   }
 
-  els.prevMonth.addEventListener("click", () => { monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() - 1, 1); renderMonth(); });
-  els.nextMonth.addEventListener("click", () => { monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() + 1, 1); renderMonth(); });
-  els.thisMonthBtn.addEventListener("click", () => { monthBase = new Date(); renderMonth(); });
+  els.prevMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() - 1, 1); renderMonth(); });
+  els.nextMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() + 1, 1); renderMonth(); });
+  els.thisMonthBtn.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(); renderMonth(); });
+
+  els.monthGantt.addEventListener("click", (event) => {
+    const day = event.target.closest(".gantt-day[data-date]");
+    if (!day) return;
+    selectedMonthISO = day.dataset.date;
+    renderMonth();
+  });
+
+  function positionGanttTooltip(clientX, clientY) {
+    const tip = els.ganttTooltip;
+    const gap = 12;
+    tip.style.left = `${clientX + gap}px`;
+    tip.style.top = `${clientY + gap}px`;
+    const rect = tip.getBoundingClientRect();
+    if (rect.right > window.innerWidth - gap) tip.style.left = `${Math.max(gap, clientX - rect.width - gap)}px`;
+    if (rect.bottom > window.innerHeight - gap) tip.style.top = `${Math.max(gap, clientY - rect.height - gap)}px`;
+  }
+
+  function showGanttTooltip(bar, clientX, clientY) {
+    if (!bar?.dataset.tooltip) return;
+    els.ganttTooltip.textContent = bar.dataset.tooltip;
+    els.ganttTooltip.hidden = false;
+    positionGanttTooltip(clientX, clientY);
+  }
+
+  function hideGanttTooltip() {
+    els.ganttTooltip.hidden = true;
+  }
+
+  els.monthGantt.addEventListener("pointerover", (event) => {
+    const bar = event.target.closest(".gantt-bar");
+    if (bar) showGanttTooltip(bar, event.clientX, event.clientY);
+  });
+  els.monthGantt.addEventListener("pointermove", (event) => {
+    if (!els.ganttTooltip.hidden && event.target.closest(".gantt-bar")) {
+      positionGanttTooltip(event.clientX, event.clientY);
+    }
+  });
+  els.monthGantt.addEventListener("pointerout", (event) => {
+    const bar = event.target.closest(".gantt-bar");
+    if (bar && !bar.contains(event.relatedTarget)) hideGanttTooltip();
+  });
+  els.monthGantt.addEventListener("focusin", (event) => {
+    const bar = event.target.closest(".gantt-bar");
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    showGanttTooltip(bar, rect.left + rect.width / 2, rect.top);
+  });
+  els.monthGantt.addEventListener("focusout", hideGanttTooltip);
 
   /* ============================================================
      首页（极简）
