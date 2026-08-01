@@ -61,7 +61,29 @@ export function loginPage(invalid = false, assetPrefix = "/legacy") {
     .card{animation:rise .72s .08s cubic-bezier(.16,1,.3,1) both}
     .random-quote{animation:quoteIn .72s .34s cubic-bezier(.16,1,.3,1) both}
     @media(max-width:760px){
-      main{padding:0;place-items:stretch}.login-shell{min-height:100svh;grid-template-columns:1fr;border:0;border-radius:0;box-shadow:none}.visual{min-height:350px;padding:27px 24px 24px}.eyebrow{justify-content:center;font-size:9px}.brand{margin-top:34px;text-align:center;font-size:clamp(44px,13vw,56px);line-height:.92}.brand span{margin-top:6px}.random-quote{max-width:27ch;margin:22px 0 0;gap:12px;font-size:11px;line-height:1.65}.avatar{right:20px;bottom:18px;width:24%;max-width:94px;opacity:.76;-webkit-mask-image:linear-gradient(to bottom,#000 0%,#000 80%,transparent 100%);mask-image:linear-gradient(to bottom,#000 0%,#000 80%,transparent 100%)}.login-side{align-items:start;padding:22px 18px 46px;background:transparent}.card{margin-top:0;padding:27px 24px;border-radius:24px;background:rgba(255,255,255,.97);box-shadow:0 22px 48px rgba(0,0,0,.2)}footer{position:absolute;z-index:5;bottom:0;left:0;right:0;padding-bottom:max(10px,env(safe-area-inset-bottom))}footer a{color:rgba(255,255,255,.5)}}
+      body{height:100svh;min-height:0;overflow:hidden;grid-template-rows:minmax(0,1fr) auto;background:#0a1020}
+      main{min-height:0;height:100%;padding:0;place-items:stretch;overflow:hidden}
+      .login-shell{width:100%;height:100%;min-height:0;grid-template-columns:1fr;grid-template-rows:clamp(232px,38%,320px) minmax(0,1fr);border:0;border-radius:0;box-shadow:none}
+      .visual{min-height:0;padding:20px 24px 16px}
+      .eyebrow{justify-content:center;font-size:9px}
+      .brand{margin-top:22px;text-align:center;font-size:clamp(40px,12vw,52px);line-height:.92}
+      .brand span{margin-top:5px}
+      .random-quote{max-width:27ch;margin:14px 0 0;gap:11px;font-size:10.5px;line-height:1.55}
+      .avatar{right:18px;bottom:10px;width:22%;max-width:88px}
+      .login-side{min-height:0;align-items:center;padding:10px 18px 12px;background:transparent;overflow:hidden}
+      .card{max-height:100%;margin:0;padding:20px 22px 18px;border-radius:23px;background:rgba(255,255,255,.97);box-shadow:0 18px 42px rgba(0,0,0,.2)}
+      .mark{width:40px;height:40px;margin-bottom:14px;border-radius:13px;font-size:22px}
+      .private{margin-bottom:6px;font-size:10px}
+      h1{font-size:28px;line-height:1.1}
+      .intro{margin:8px 0 16px;font-size:13px;line-height:1.6}
+      label{margin-bottom:7px;font-size:12px}
+      .password-field{height:46px}
+      .reveal{width:42px;height:42px}
+      .submit{height:46px;margin-top:12px}
+      .privacy{margin-top:12px;font-size:10.5px}
+      footer{position:static;z-index:5;padding:5px 16px max(7px,env(safe-area-inset-bottom));line-height:16px;background:#0a1020}
+      footer a{color:rgba(255,255,255,.5)}
+    }
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
   </style>
 </head>
