@@ -210,6 +210,7 @@ input, textarea, button { font: inherit; color: inherit; }
 /* ============================ 视图 ============================ */
 .view { display: none; }
 .view.is-active { display: block; animation: viewIn var(--t-norm); }
+.gsap-ready .view.is-active { animation: none; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .panel {
@@ -327,6 +328,7 @@ input[type="date"].input { font-family: var(--font-num); }
   transition: all var(--t-fast);
   animation: cardIn var(--t-norm);
 }
+.gsap-ready .task-card { animation: none; }
 @keyframes cardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .task-card:hover { border-color: var(--sep-2); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .task-main { min-width: 0; }
@@ -365,7 +367,7 @@ input[type="date"].input { font-family: var(--font-num); }
 .task-detail { margin-top: var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
 .task-detail[hidden] { display: none; }
 
-/* Deline 标签 */
+/* Deadline 标签 */
 .rev {
   font-family: var(--font-num); font-weight: 600; font-size: .78rem;
   color: var(--ink-2); background: var(--surface-2);
@@ -376,7 +378,7 @@ input[type="date"].input { font-family: var(--font-num); }
 .rev.done { color: var(--green); background: var(--green-bg); border-color: transparent; }
 
 .progress-track { height: 5px; background: var(--sep); border-radius: var(--r-pill); overflow: hidden; margin-top: var(--s3); }
-.progress-fill { height: 100%; background: var(--blue); border-radius: var(--r-pill); transition: width var(--t-norm); }
+.progress-fill { height: 100%; background: var(--blue); border-radius: var(--r-pill); transition: width var(--t-norm); transform-origin: left center; }
 .progress-fill.done { background: var(--green); }
 
 /* 生命周期状态徽章 */
@@ -433,11 +435,11 @@ input[type="date"].input { font-family: var(--font-num); }
 .bd-name { font-weight: 600; color: var(--ink); word-break: break-word; }
 .bd-val { font-family: var(--font-num); font-size: .82rem; color: var(--muted); white-space: nowrap; }
 .bd-bar { height: 8px; background: var(--sep); border-radius: var(--r-pill); overflow: hidden; }
-.bd-fill { height: 100%; border-radius: var(--r-pill); transition: width var(--t-norm); }
+.bd-fill { height: 100%; border-radius: var(--r-pill); transition: width var(--t-norm); transform-origin: left center; }
 .bd-fill.u-high { background: var(--red); }
 .bd-fill.u-medium { background: var(--orange); }
 .bd-fill.u-low { background: var(--green); }
-.bd-fill.hours { background: var(--blue); }
+.bd-fill.progress { background: var(--blue); }
 
 .report-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
 .report-head .panel-title { margin: 0; }
@@ -544,6 +546,7 @@ input[type="date"].input { font-family: var(--font-num); }
   cursor: default;
   transition: filter var(--t-fast), transform var(--t-fast);
   z-index: 2;
+  transform-origin: left center;
 }
 .gantt-bar:hover { filter: brightness(1.08); transform: translateY(-50%) scale(1.02); z-index: 3; }
 .gantt-bar .gb-name { overflow: hidden; text-overflow: ellipsis; }
@@ -556,7 +559,7 @@ input[type="date"].input { font-family: var(--font-num); }
   box-shadow: inset 0 0 0 1px var(--orange);
 }
 
-/* Deline 标记 */
+/* Deadline 标记 */
 .gantt-review {
   position: absolute; top: 50%; transform: translate(-50%, -50%) rotate(45deg);
   width: 9px; height: 9px; background: #fff;

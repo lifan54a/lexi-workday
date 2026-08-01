@@ -107,6 +107,86 @@
     avatarWrap: $("avatarWrap"), avatarGreet: $("avatarGreet"),
   };
 
+  /* -------------------- 页面动效 -------------------- */
+  const motion = window.gsap;
+  const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function animateBasicView(view) {
+    if (!motion || reduceMotion()) return;
+    const root = els.views[view];
+    const targets = view === "home"
+      ? root.querySelectorAll(".hero-tag, .hero-typography, .avatar-stage, .hero-role")
+      : root.querySelectorAll(".list-panel, .daily-footer");
+    if (!targets.length) return;
+    motion.killTweensOf(targets);
+    motion.fromTo(targets,
+      { autoAlpha: 0, y: 16, scale: 0.985, willChange: "transform,opacity" },
+      { autoAlpha: 1, y: 0, scale: 1, duration: 0.58, stagger: 0.07, ease: "power3.out", clearProps: "transform,opacity,visibility,willChange" });
+  }
+
+  function animateDailyTasks() {
+    if (!motion || reduceMotion() || !els.views.daily.classList.contains("is-active")) return;
+    const cards = els.taskList.querySelectorAll(".task-card");
+    const fills = els.taskList.querySelectorAll(".progress-fill");
+    if (!cards.length) return;
+    motion.killTweensOf([...cards, ...fills]);
+
+    const timeline = motion.timeline({ defaults: { ease: "power3.out" } });
+    timeline
+      .fromTo(cards,
+        { autoAlpha: 0, y: 14, scale: 0.985, willChange: "transform,opacity" },
+        { autoAlpha: 1, y: 0, scale: 1, duration: 0.46, stagger: 0.075, clearProps: "transform,opacity,visibility,willChange" }, 0)
+      .fromTo(fills,
+        { scaleX: 0, transformOrigin: "left center", willChange: "transform" },
+        { scaleX: 1, duration: 0.72, stagger: 0.075, ease: "power2.out", clearProps: "transform,transformOrigin,willChange" }, 0.14);
+  }
+
+  function animateWeeklyView() {
+    if (!motion || reduceMotion()) return;
+    const root = els.views.weekly;
+    const nav = root.querySelector(".week-nav");
+    const cards = root.querySelectorAll(".stat-card");
+    const panels = root.querySelectorAll(".weekly-cols .panel, .report-panel");
+    const rows = root.querySelectorAll(".bd-row");
+    const fills = root.querySelectorAll(".bd-fill");
+    const targets = [nav, ...cards, ...panels, ...rows, ...fills].filter(Boolean);
+    motion.killTweensOf(targets);
+
+    const timeline = motion.timeline({ defaults: { ease: "power3.out" } });
+    timeline
+      .fromTo(nav, { autoAlpha: 0, y: -8 }, { autoAlpha: 1, y: 0, duration: 0.35, clearProps: "transform,opacity,visibility" }, 0)
+      .fromTo(cards, { autoAlpha: 0, y: 18, scale: 0.97 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.48, stagger: 0.06, clearProps: "transform,opacity,visibility" }, 0.06)
+      .fromTo(panels, { autoAlpha: 0, y: 20 }, { autoAlpha: 1, y: 0, duration: 0.52, stagger: 0.08, clearProps: "transform,opacity,visibility" }, 0.14)
+      .fromTo(rows, { autoAlpha: 0, x: -8 }, { autoAlpha: 1, x: 0, duration: 0.4, stagger: 0.035, clearProps: "transform,opacity,visibility" }, 0.22)
+      .fromTo(fills,
+        { scaleX: 0, transformOrigin: "left center", willChange: "transform" },
+        { scaleX: 1, duration: 0.78, stagger: 0.055, ease: "power2.out", clearProps: "transform,transformOrigin,willChange" }, 0.28);
+  }
+
+  function animateMonthView() {
+    if (!motion || reduceMotion()) return;
+    const root = els.views.month;
+    const nav = root.querySelector(".month-nav");
+    const panel = root.querySelector(".month-gantt-panel");
+    const days = root.querySelectorAll(".gantt-day");
+    const rows = root.querySelectorAll(".gantt-row");
+    const bars = root.querySelectorAll(".gantt-bar");
+    const markers = root.querySelectorAll(".gantt-review, .gantt-today, .gantt-selected");
+    const targets = [nav, panel, ...days, ...rows, ...bars, ...markers].filter(Boolean);
+    motion.killTweensOf(targets);
+
+    const timeline = motion.timeline({ defaults: { ease: "power3.out" } });
+    timeline
+      .fromTo(nav, { autoAlpha: 0, y: -8 }, { autoAlpha: 1, y: 0, duration: 0.35, clearProps: "transform,opacity,visibility" }, 0)
+      .fromTo(panel, { autoAlpha: 0, y: 18, scale: 0.99 }, { autoAlpha: 1, y: 0, scale: 1, duration: 0.52, clearProps: "transform,opacity,visibility" }, 0.05)
+      .fromTo(days, { autoAlpha: 0, y: -6 }, { autoAlpha: 1, y: 0, duration: 0.28, stagger: 0.012, clearProps: "transform,opacity,visibility" }, 0.16)
+      .fromTo(rows, { autoAlpha: 0, x: -10 }, { autoAlpha: 1, x: 0, duration: 0.4, stagger: 0.055, clearProps: "transform,opacity,visibility" }, 0.2)
+      .fromTo(bars,
+        { scaleX: 0, transformOrigin: "left center", willChange: "transform" },
+        { scaleX: 1, duration: 0.72, stagger: 0.07, ease: "power2.out", clearProps: "transform,transformOrigin,willChange" }, 0.34)
+      .fromTo(markers, { autoAlpha: 0, scale: 0.5 }, { autoAlpha: 1, scale: 1, duration: 0.28, stagger: 0.035, clearProps: "transform,opacity,visibility" }, 0.62);
+  }
+
   /* -------------------- 持久化 -------------------- */
   function load() {
     try {
@@ -206,6 +286,24 @@
       }
     }
   }
+
+  async function refreshCloudTasks(renderView) {
+    try {
+      // 先等待本机尚未完成的保存，避免刚编辑的数据被较旧的云端结果覆盖。
+      await syncQueue;
+      const data = await cloudRequest();
+      if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
+
+      tasks = data.tasks;
+      cacheTasks(tasks);
+      if (data.updatedAt) writeSyncMarker(data.updatedAt);
+    } catch (e) {
+      if (e.message !== "unauthorized") {
+        toast("最新数据刷新失败，已显示本机缓存");
+      }
+    }
+    renderView();
+  }
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   /* -------------------- 通用工具 -------------------- */
@@ -224,7 +322,7 @@
       .sort((a, b) => (startDateOf(a) < startDateOf(b) ? -1 : startDateOf(a) > startDateOf(b) ? 1 : 0));
   }
 
-  /* 每日任务排序：紧急程度 > Deline（早者优先，无日期置后） > 增加时间（新者靠前） */
+  /* 每日任务排序：紧急程度 > Deadline（早者优先，无日期置后） > 增加时间（新者靠前） */
   function sortDaily(arr) {
     const NO_REVIEW = "9999-99-99";
     return arr.slice().sort((a, b) => {
@@ -282,11 +380,11 @@
 
     // 统计（统计当日看板上的全部任务）
     const avgP = Math.round(avg(dayTasks, (t) => t.progress));
-    // 今日 Deline：Deline 截止日期正好等于当天（含顺延罗列进来的任务）
-    const delineN = dayTasks.filter((t) => t.reviewDate === iso).length;
+    // 今日 Deadline：截止日期正好等于当天（含顺延罗列进来的任务）
+    const deadlineN = dayTasks.filter((t) => t.reviewDate === iso).length;
     els.dayStats.innerHTML = `
       <div class="stat-chip"><div class="v">${dayTasks.length}</div><div class="k">任务数</div></div>
-      <div class="stat-chip"><div class="v">${delineN}</div><div class="k">今日Deline任务数量</div></div>
+      <div class="stat-chip"><div class="v">${deadlineN}</div><div class="k">今日 Deadline 任务数量</div></div>
       <div class="stat-chip"><div class="v">${dayTasks.length ? avgP : 0}<small>%</small></div><div class="k">平均进度</div></div>
     `;
 
@@ -299,6 +397,7 @@
     els.emptyState.hidden = true;
     els.taskList.innerHTML = dayTasks.map((t) => taskCardHTML(t)).join("");
     updateMood();
+    animateDailyTasks();
   }
 
   function taskCardHTML(t) {
@@ -341,7 +440,7 @@
             <span>工期 <b>${rangeTxt}</b></span>
             ${reviewBadge(t)}
           </div>
-          <div class="progress-track"><div class="progress-fill${grey}" style="width:${t.progress}%"></div></div>
+          <div class="progress-track"><div class="progress-fill${grey}" role="progressbar" aria-label="${escapeHTML(t.project)}任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${t.progress}" style="width:${t.progress}%"></div></div>
           ${toggle}
           ${detail}
         </div>
@@ -368,8 +467,8 @@
     const todayISO = toISO(new Date());
     if (t.progress >= 100) return `<span class="rev done">已交付</span>`;
     if (t.reviewDate < todayISO) return `<span class="rev overdue">逾期 ${fmtMD(t.reviewDate)}</span>`;
-    if (t.reviewDate === todayISO) return `<span class="rev due">今天 Deline</span>`;
-    return `<span class="rev">Deline ${fmtMD(t.reviewDate)}</span>`;
+    if (t.reviewDate === todayISO) return `<span class="rev due">今天 Deadline</span>`;
+    return `<span class="rev">Deadline ${fmtMD(t.reviewDate)}</span>`;
   }
 
   /* -------------------- 表单：紧急程度分段 -------------------- */
@@ -548,7 +647,7 @@
   }
 
   /* 统一 Gantt：日历时间线 + 项目工期总览合并为单一视图 */
-  function renderMonth() {
+  function renderMonth(animate = false) {
     const y = monthBase.getFullYear();
     const m = monthBase.getMonth();
     els.monthLabel.textContent = `${y} 年 ${m + 1} 月`;
@@ -587,6 +686,7 @@
       els.monthHint.textContent = selectedDay
         ? `已定位 ${m + 1}月${selectedDay}日 · 当天没有任务`
         : "点击日期可定位当天任务；悬停任务可立即查看详情。";
+      if (animate) animateMonthView();
       return;
     }
 
@@ -626,19 +726,19 @@
           ? `${fmtMD(sd)} – ${fmtMD(plannedEnd)}（进行中，已延续至 ${fmtMD(ed)}）`
           : `${fmtMD(sd)} – ${fmtMD(ed)}`;
         const tooltip = `${t.project}\n${rangeText}\n状态：${STATUS[stKey].label}`
-          + (t.reviewDate ? ` · Deline ${fmtMD(t.reviewDate)}` : "");
+          + (t.reviewDate ? ` · Deadline ${fmtMD(t.reviewDate)}` : "");
         const name = width > 9 ? `<span class="gb-name">${escapeHTML(t.project)}</span>` : "";
         return `<div class="gantt-bar is-${stKey}${isOnSelectedDay ? " is-on-selected-day" : ""}"`
           + ` style="left:${left}%;width:${width}%" data-tooltip="${escapeHTML(tooltip)}"`
           + ` aria-label="${escapeHTML(tooltip)}" tabindex="0">${name}</div>`;
       }).join("");
 
-      // Deline 标记（仅显示在月内者）
+      // Deadline 标记（仅显示在月内者）
       const reviews = arr.filter((t) => t.reviewDate && t.reviewDate >= monthStartISO && t.reviewDate <= monthEndISO)
         .map((t) => {
           const rd = parseDay(t.reviewDate);
           const left = (rd - 0.5) / daysInMonth * 100;
-          return `<span class="gantt-review" style="left:${left}%" title="Deline ${fmtMD(t.reviewDate)}"></span>`;
+          return `<span class="gantt-review" style="left:${left}%" title="Deadline ${fmtMD(t.reviewDate)}"></span>`;
         }).join("");
 
       return `<div class="gantt-row gantt-grid">`
@@ -663,11 +763,12 @@
     els.monthHint.textContent = selectedDay
       ? `已定位 ${m + 1}月${selectedDay}日 · ${selectedTaskCount} 项任务`
       : "点击日期可定位当天任务；悬停任务可立即查看详情。";
+    if (animate) animateMonthView();
   }
 
-  els.prevMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() - 1, 1); renderMonth(); });
-  els.nextMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() + 1, 1); renderMonth(); });
-  els.thisMonthBtn.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(); renderMonth(); });
+  els.prevMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() - 1, 1); renderMonth(true); });
+  els.nextMonth.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(monthBase.getFullYear(), monthBase.getMonth() + 1, 1); renderMonth(true); });
+  els.thisMonthBtn.addEventListener("click", () => { selectedMonthISO = ""; monthBase = new Date(); renderMonth(true); });
 
   els.monthGantt.addEventListener("click", (event) => {
     const day = event.target.closest(".gantt-day[data-date]");
@@ -729,7 +830,7 @@
   /* ============================================================
      周报视图
      ============================================================ */
-  function renderWeekly() {
+  function renderWeekly(animate = false) {
     const mon = weekBase;
     const sun = addDays(weekBase, 6);
     const monISO = toISO(mon), sunISO = toISO(sun);
@@ -754,7 +855,6 @@
     wk.forEach((t) => {
       (byProject[t.project] = byProject[t.project] || []).push(t);
     });
-    const maxProjH = Math.max(1, ...Object.values(byProject).map((arr) => sum(arr, (t) => t.hours)));
     const projKeys = Object.keys(byProject).sort((a, b) => sum(byProject[b], (t) => t.hours) - sum(byProject[a], (t) => t.hours));
     els.projectBreakdown.innerHTML = projKeys.length
       ? projKeys.map((p) => {
@@ -765,7 +865,7 @@
             <div class="bd-row">
               <div class="bd-top"><span class="bd-name">${escapeHTML(p)}</span>
                 <span class="bd-val">${h}h · ${arr.length} 项 · 进度 ${pr}%</span></div>
-              <div class="bd-bar"><div class="bd-fill hours" style="width:${(h / maxProjH) * 100}%"></div></div>
+              <div class="bd-bar"><div class="bd-fill progress" role="progressbar" aria-label="${escapeHTML(p)}平均进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pr}" style="width:${pr}%"></div></div>
             </div>`;
         }).join("")
       : `<p class="empty-sub" style="padding:var(--s4) 0">本周暂无数据。</p>`;
@@ -773,22 +873,23 @@
     // 优先级分布
     const counts = { high: 0, medium: 0, low: 0 };
     wk.forEach((t) => counts[t.urgency]++);
-    const maxU = Math.max(1, counts.high, counts.medium, counts.low);
     const order = ["high", "medium", "low"];
     els.urgencyBreakdown.innerHTML = wk.length
       ? order.map((u) => {
           const n = counts[u];
+          const pct = Math.round((n / wk.length) * 100);
           return `
             <div class="bd-row">
               <div class="bd-top"><span class="bd-name">${URGENCY[u].label}优先级</span>
-                <span class="bd-val">${n} 项 · ${Math.round((n / wk.length) * 100)}%</span></div>
-              <div class="bd-bar"><div class="bd-fill u-${u}" style="width:${(n / maxU) * 100}%"></div></div>
+                <span class="bd-val">${n} 项 · ${pct}%</span></div>
+              <div class="bd-bar"><div class="bd-fill u-${u}" role="progressbar" aria-label="${URGENCY[u].label}优先级任务占比" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" style="width:${pct}%"></div></div>
             </div>`;
         }).join("")
       : `<p class="empty-sub" style="padding:var(--s4) 0">本周暂无数据。</p>`;
 
     // 周报文本
     els.reportText.textContent = buildReport(mon, sun, wk, els.userName.value.trim());
+    if (animate) animateWeeklyView();
   }
 
   function buildReport(mon, sun, wk, name) {
@@ -830,7 +931,7 @@
       if (t.notes) L.push(`      备注：${t.notes}`);
     });
     L.push("");
-    L.push("四、待 Deline 事项");
+    L.push("四、待 Deadline 事项");
     const rev = wk.filter((t) => t.reviewDate).sort((a, b) => a.reviewDate.localeCompare(b.reviewDate));
     if (rev.length === 0) L.push("  （无）");
     rev.forEach((t) => {
@@ -844,9 +945,9 @@
   }
 
   /* -------------------- 周导航 -------------------- */
-  els.prevWeek.addEventListener("click", () => { weekBase = addDays(weekBase, -7); renderWeekly(); });
-  els.nextWeek.addEventListener("click", () => { weekBase = addDays(weekBase, 7); renderWeekly(); });
-  els.thisWeekBtn.addEventListener("click", () => { weekBase = getMonday(new Date()); renderWeekly(); });
+  els.prevWeek.addEventListener("click", () => { weekBase = addDays(weekBase, -7); renderWeekly(true); });
+  els.nextWeek.addEventListener("click", () => { weekBase = addDays(weekBase, 7); renderWeekly(true); });
+  els.thisWeekBtn.addEventListener("click", () => { weekBase = getMonday(new Date()); renderWeekly(true); });
   els.userName.addEventListener("input", () => {
     localStorage.setItem(NAME_KEY, els.userName.value.trim());
     renderWeekly();
@@ -885,10 +986,15 @@
         el.classList.toggle("is-active", on);
         el.hidden = !on;
       });
-      if (view === "weekly") renderWeekly();
-      else if (view === "month") renderMonth();
-      else if (view === "daily") renderDaily();
-      else renderHome();
+      if (view === "weekly") {
+        renderWeekly(false);
+        void refreshCloudTasks(() => renderWeekly(true));
+      } else if (view === "month") {
+        renderMonth(false);
+        void refreshCloudTasks(() => renderMonth(true));
+      }
+      else if (view === "daily") { renderDaily(); animateBasicView("daily"); }
+      else { renderHome(); animateBasicView("home"); }
     });
   });
 

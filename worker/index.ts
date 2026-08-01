@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { loginPage as loginPageHTML } from "../edgeone/edge-functions/login.js";
 
 interface Env {
   ASSETS: Fetcher;
@@ -19,7 +20,7 @@ interface Env {
 const encoder = new TextEncoder();
 
 function loginPage(invalid = false): Response {
-  return new Response(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lexi's workday · 登录</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f1eb;color:#222;font:16px system-ui,sans-serif}.card{width:min(360px,calc(100% - 48px));padding:32px;border-radius:20px;background:#fff;box-shadow:0 16px 50px #0001}h1{margin:0 0 8px;font-size:24px}p{color:#666}input,button{box-sizing:border-box;width:100%;padding:12px 14px;border-radius:10px;font:inherit}input{margin:14px 0;border:1px solid #ccc}button{border:0;background:#222;color:#fff;cursor:pointer}.error{color:#b42318}</style></head><body><form class="card" method="post" action="/login"><h1>Lexi's workday</h1><p>请输入访问密码</p>${invalid ? '<p class="error">密码错误，请重试。</p>' : ""}<input type="password" name="password" autocomplete="current-password" autofocus required><button type="submit">进入排期台</button></form></body></html>`, {
+  return new Response(loginPageHTML(invalid), {
     status: invalid ? 401 : 200,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY" },
   });

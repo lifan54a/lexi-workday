@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { gsap } from "gsap";
 import PixelBlast from "./PixelBlast";
 
 type BackgroundHost = {
@@ -45,6 +46,9 @@ export default function LegacyHome() {
   useEffect(() => {
     if (!markup || scriptLoadedRef.current) return;
     scriptLoadedRef.current = true;
+    const legacyWindow = window as typeof window & { gsap?: typeof gsap };
+    legacyWindow.gsap = gsap;
+    document.documentElement.classList.add("gsap-ready");
     const script = document.createElement("script");
     script.src = "/legacy/app.js";
     script.async = false;
