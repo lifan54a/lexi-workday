@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 
-export function loginPage(invalid = false) {
+export function loginPage(invalid = false, assetPrefix = "/legacy") {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -74,7 +74,7 @@ export function loginPage(invalid = false) {
           <div class="brand">Lexi's<span>workday</span></div>
           <p class="random-quote"></p>
         </div>
-        <img class="avatar" src="/legacy/avatar.png?v=20260731-1" alt="">
+        <img class="avatar" src="${assetPrefix}/avatar.png?v=20260801-1" alt="">
       </div>
       <div class="login-side">
         <form class="card" method="post" action="/login">
@@ -97,7 +97,7 @@ export function loginPage(invalid = false) {
   <footer>
     <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026102963号</a>
   </footer>
-  <script src="/legacy/pixelblast-static.js?v=20260731-1"></script>
+  <script src="${assetPrefix}/pixelblast-static.js?v=20260801-1"></script>
   <script>
     const quotes = [
       '答案正在靠近。', '先完成，再完美。', '现在正是好时机。',
@@ -158,7 +158,7 @@ export async function onRequest({ request, env }) {
   }
 
   if (request.method === "GET") {
-    return new Response(loginPage(), {
+    return new Response(loginPage(false, ""), {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
     });
   }
@@ -170,7 +170,7 @@ export async function onRequest({ request, env }) {
   const form = await request.formData();
   const password = String(form.get("password") ?? "");
   if (!safeEqual(password, env.WEB_PASSWORD)) {
-    return new Response(loginPage(true), {
+    return new Response(loginPage(true, ""), {
       status: 401,
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
     });
