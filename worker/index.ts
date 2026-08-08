@@ -20,10 +20,12 @@ interface Env {
 const encoder = new TextEncoder();
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_TOKEN_PURPOSE = "lexi-workday-authorized";
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
 
-function loginPage(invalid = false): Response {
-  return new Response(loginPageHTML(invalid), {
-    status: invalid ? 401 : 200,
+function loginPage(invalid = false, rateLimited = false): Response {
+  return new Response(loginPageHTML(invalid, "/legacy", rateLimited), {
+    status: rateLimited ? 429 : invalid ? 401 : 200,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY" },
   });
 }
@@ -51,6 +53,48 @@ async function isSessionTokenValid(token: string, secret: string): Promise<boole
   return safeEqual(token, await sessionToken(secret, expiresAt));
 }
 
+function isPublicLoginAsset(pathname: string): boolean {
+  return pathname === "/favicon.ico"
+    || pathname === "/apple-touch-icon.png"
+    || pathname === "/legacy/avatar.png"
+    || pathname === "/legacy/pixelblast-static.js"
+    || pathname.startsWith("/icons/");
+}
+
+async function clientKey(request: Request, secret: string): Promise<string> {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const address = request.headers.get("cf-connecting-ip") ?? forwarded ?? "unknown";
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(address));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 40);
+}
+
+async function reserveLoginAttempt(request: Request, env: Env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS login_rate_limits (
+    client_key TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (client_key, window_start)
+  )`).run();
+
+  const now = Date.now();
+  const fingerprint = await clientKey(request, env.SESSION_SECRET);
+  const windowStart = Math.floor(now / LOGIN_WINDOW_MS) * LOGIN_WINDOW_MS;
+  const counter = await env.DB.prepare(`INSERT INTO login_rate_limits (client_key, window_start, attempts)
+    VALUES (?, ?, 1)
+    ON CONFLICT(client_key, window_start) DO UPDATE SET attempts = attempts + 1
+    RETURNING attempts`).bind(fingerprint, windowStart).first<{ attempts: number }>();
+  await env.DB.prepare("DELETE FROM login_rate_limits WHERE window_start < ?")
+    .bind(windowStart - LOGIN_WINDOW_MS).run();
+  return {
+    limited: (counter?.attempts ?? LOGIN_MAX_ATTEMPTS + 1) > LOGIN_MAX_ATTEMPTS,
+    retryAfter: Math.max(1, Math.ceil((windowStart + LOGIN_WINDOW_MS - now) / 1000)),
+    markSuccess: () => env.DB.prepare(
+      "DELETE FROM login_rate_limits WHERE client_key = ? AND window_start = ?",
+    ).bind(fingerprint, windowStart).run(),
+  };
+}
+
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
@@ -70,10 +114,19 @@ const worker = {
 
     if (url.pathname === "/login" && request.method === "GET") return loginPage();
 
+    if (isPublicLoginAsset(url.pathname)) return env.ASSETS.fetch(request);
+
     if (url.pathname === "/login" && request.method === "POST") {
+      const attempt = await reserveLoginAttempt(request, env);
+      if (attempt.limited) {
+        const response = loginPage(false, true);
+        response.headers.set("retry-after", String(attempt.retryAfter));
+        return response;
+      }
       const form = await request.formData();
       const password = String(form.get("password") ?? "");
       if (!safeEqual(password, env.WEB_PASSWORD)) return loginPage(true);
+      await attempt.markSuccess();
       const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
       const token = await sessionToken(env.SESSION_SECRET, expiresAt);
       return new Response(null, {

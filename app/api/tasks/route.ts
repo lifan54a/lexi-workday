@@ -8,6 +8,15 @@ type StoredState = {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const URGENCIES = new Set(["high", "medium", "low"]);
 
+function isISODate(value: string): boolean {
+  if (!ISO_DATE.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
 async function ensureTable() {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_state (
     id INTEGER PRIMARY KEY,
@@ -36,9 +45,9 @@ function isValidTask(value: unknown, allowUnsafeLinks = false): boolean {
     typeof task.urgency === "string" && URGENCIES.has(task.urgency) &&
     typeof task.hours === "number" && Number.isFinite(task.hours) && task.hours >= 0 && task.hours <= 24 &&
     typeof task.progress === "number" && Number.isInteger(task.progress) && task.progress >= 0 && task.progress <= 100 &&
-    typeof startDate === "string" && ISO_DATE.test(startDate) &&
+    typeof startDate === "string" && isISODate(startDate) &&
     (task.duration === undefined || (typeof task.duration === "number" && Number.isInteger(task.duration) && task.duration >= 1 && task.duration <= 365)) &&
-    (task.reviewDate === undefined || (typeof task.reviewDate === "string" && (!task.reviewDate || ISO_DATE.test(task.reviewDate)))) &&
+    (task.reviewDate === undefined || (typeof task.reviewDate === "string" && (!task.reviewDate || isISODate(task.reviewDate)))) &&
     (task.notes === undefined || (typeof task.notes === "string" && task.notes.length <= 300)) &&
     (task.reqDoc === undefined || (typeof task.reqDoc === "string" && task.reqDoc.length <= 500 && (allowUnsafeLinks || isSafeLink(task.reqDoc)))) &&
     (task.createdAt === undefined || (typeof task.createdAt === "number" && Number.isFinite(task.createdAt)))
