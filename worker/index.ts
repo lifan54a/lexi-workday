@@ -18,6 +18,8 @@ interface Env {
 }
 
 const encoder = new TextEncoder();
+const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_TOKEN_PURPOSE = "lexi-workday-authorized";
 
 function loginPage(invalid = false): Response {
   return new Response(loginPageHTML(invalid), {
@@ -26,10 +28,11 @@ function loginPage(invalid = false): Response {
   });
 }
 
-async function sessionToken(secret: string): Promise<string> {
+async function sessionToken(secret: string, expiresAt: number): Promise<string> {
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode("lexi-workday-authorized"));
-  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`${SESSION_TOKEN_PURPOSE}:${expiresAt}`));
+  const encodedSignature = Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${expiresAt}.${encodedSignature}`;
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -37,6 +40,15 @@ function safeEqual(left: string, right: string): boolean {
   let result = 0;
   for (let index = 0; index < left.length; index += 1) result |= left.charCodeAt(index) ^ right.charCodeAt(index);
   return result === 0;
+}
+
+async function isSessionTokenValid(token: string, secret: string): Promise<boolean> {
+  const separator = token.indexOf(".");
+  if (separator <= 0) return false;
+  const expiresAt = Number(token.slice(0, separator));
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= nowSeconds || expiresAt > nowSeconds + SESSION_TTL_SECONDS + 60) return false;
+  return safeEqual(token, await sessionToken(secret, expiresAt));
 }
 
 interface ExecutionContext {
@@ -62,16 +74,16 @@ const worker = {
       const form = await request.formData();
       const password = String(form.get("password") ?? "");
       if (!safeEqual(password, env.WEB_PASSWORD)) return loginPage(true);
-      const token = await sessionToken(env.SESSION_SECRET);
+      const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+      const token = await sessionToken(env.SESSION_SECRET, expiresAt);
       return new Response(null, {
         status: 303,
         headers: { location: "/", "set-cookie": `lexi_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800` },
       });
     }
 
-    const token = await sessionToken(env.SESSION_SECRET);
     const cookie = request.headers.get("cookie")?.match(/(?:^|;\s*)lexi_session=([^;]+)/)?.[1] ?? "";
-    if (!safeEqual(cookie, token)) {
+    if (!(await isSessionTokenValid(cookie, env.SESSION_SECRET))) {
       if (url.pathname.startsWith("/api/")) return Response.json({ error: "unauthorized" }, { status: 401 });
       return Response.redirect(new URL("/login", url), 303);
     }

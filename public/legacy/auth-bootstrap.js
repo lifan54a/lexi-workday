@@ -22,5 +22,10 @@
       showPage();
       return data;
     })
-    .catch(() => redirectToLogin());
+    .catch((error) => {
+      // 只有明确的 401 才代表会话失效。网络或服务故障时显示页面，
+      // 让主程序继续使用本机缓存，并由同步逻辑提示用户。
+      showPage();
+      throw error;
+    });
 })();

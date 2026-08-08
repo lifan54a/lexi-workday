@@ -1,4 +1,6 @@
 const encoder = new TextEncoder();
+const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_TOKEN_PURPOSE = "lexi-workday-edgeone-authorized";
 
 export function loginPage(invalid = false, assetPrefix = "/legacy") {
   return `<!doctype html>
@@ -70,8 +72,8 @@ export function loginPage(invalid = false, assetPrefix = "/legacy") {
       .brand span{margin-top:5px}
       .random-quote{max-width:27ch;margin:14px 0 0;gap:11px;font-size:10.5px;line-height:1.55}
       .avatar{right:18px;bottom:10px;width:22%;max-width:88px}
-      .login-side{min-height:0;align-items:center;padding:10px 18px 12px;background:transparent;overflow:hidden}
-      .card{max-height:100%;margin:0;padding:20px 22px 18px;border-radius:23px;background:rgba(255,255,255,.97);box-shadow:0 18px 42px rgba(0,0,0,.2)}
+      .login-side{min-height:0;align-items:center;padding:10px 18px 12px;background:transparent;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+      .card{margin:0;padding:20px 22px 18px;border-radius:23px;background:rgba(255,255,255,.97);box-shadow:0 18px 42px rgba(0,0,0,.2)}
       .mark{width:40px;height:40px;margin-bottom:14px;border-radius:13px;font-size:22px}
       .private{margin-bottom:6px;font-size:10px}
       h1{font-size:28px;line-height:1.1}
@@ -147,7 +149,10 @@ export function loginPage(invalid = false, assetPrefix = "/legacy") {
 </html>`;
 }
 
-async function createSessionToken(secret) {
+export async function createSessionToken(
+  secret,
+  expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+) {
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(secret),
@@ -158,11 +163,12 @@ async function createSessionToken(secret) {
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
-    encoder.encode("lexi-workday-edgeone-authorized"),
+    encoder.encode(`${SESSION_TOKEN_PURPOSE}:${expiresAt}`),
   );
-  return Array.from(new Uint8Array(signature), (byte) =>
+  const encodedSignature = Array.from(new Uint8Array(signature), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
+  return `${expiresAt}.${encodedSignature}`;
 }
 
 function safeEqual(left, right) {
@@ -172,6 +178,18 @@ function safeEqual(left, right) {
     result |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return result === 0;
+}
+
+export async function isSessionTokenValid(token, secret, now = Date.now()) {
+  const separator = token.indexOf(".");
+  if (separator <= 0) return false;
+  const expiresAt = Number(token.slice(0, separator));
+  const nowSeconds = Math.floor(now / 1000);
+  if (expiresAt <= nowSeconds || expiresAt > nowSeconds + SESSION_TTL_SECONDS + 60) {
+    return false;
+  }
+  if (!Number.isSafeInteger(expiresAt)) return false;
+  return safeEqual(token, await createSessionToken(secret, expiresAt));
 }
 
 export async function onRequest({ request, env }) {

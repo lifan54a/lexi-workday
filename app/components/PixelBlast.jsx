@@ -305,8 +305,8 @@ const PixelBlast = ({
   variant = 'square',
   pixelSize = 3,
   color = '#B497CF',
-  className,
-  style,
+  className = /** @type {string} */ (''),
+  style = /** @type {import('react').CSSProperties | undefined} */ (undefined),
   antialias = true,
   patternScale = 2,
   patternDensity = 1,
@@ -324,7 +324,7 @@ const PixelBlast = ({
   transparent = true,
   edgeFade = 0.5,
   noiseAmount = 0,
-  interactionTarget = null
+  interactionTarget = /** @type {HTMLElement | null} */ (null)
 }) => {
   const containerRef = useRef(null);
   const visibilityRef = useRef({ visible: true });

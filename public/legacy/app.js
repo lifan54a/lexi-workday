@@ -73,6 +73,8 @@
 
   /* -------------------- 状态 -------------------- */
   let tasks = load();
+  let syncedTasks = [];
+  let cloudUpdatedAt = null;
   let selectedDate = new Date();
   let weekBase = getMonday(new Date()); // 当前周周一
   let monthBase = new Date();           // 当前展示月份（任意一天即可）
@@ -193,19 +195,19 @@
       const raw = localStorage.getItem(STORE_KEY);
       const arr = raw ? JSON.parse(raw) : [];
       return Array.isArray(arr) ? arr : [];
-    } catch (e) { return []; }
+    } catch { return []; }
   }
 
   function cacheTasks(nextTasks) {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(nextTasks)); } catch (e) {}
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(nextTasks)); } catch {}
   }
 
   function readSyncMarker() {
-    try { return localStorage.getItem(SYNC_KEY) || ""; } catch (e) { return ""; }
+    try { return localStorage.getItem(SYNC_KEY) || ""; } catch { return ""; }
   }
 
   function writeSyncMarker(updatedAt) {
-    try { localStorage.setItem(SYNC_KEY, updatedAt || new Date().toISOString()); } catch (e) {}
+    try { localStorage.setItem(SYNC_KEY, updatedAt || new Date().toISOString()); } catch {}
   }
 
   function redirectToLogin() {
@@ -222,22 +224,101 @@
       redirectToLogin();
       throw new Error("unauthorized");
     }
+    if (response.status === 409) {
+      const state = await response.json();
+      const error = new Error("conflict");
+      error.cloudState = state;
+      throw error;
+    }
     if (!response.ok) throw new Error(`cloud unavailable (${response.status})`);
     return response.json();
   }
 
   let syncQueue = Promise.resolve();
 
+  function cloneTasks(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function sameTask(left, right) {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  function mergeConcurrentChanges(baseTasks, localTasks, remoteTasks) {
+    const base = new Map(baseTasks.map((task) => [task.id, task]));
+    const local = new Map(localTasks.map((task) => [task.id, task]));
+    const remote = new Map(remoteTasks.map((task) => [task.id, task]));
+    const merged = new Map();
+    let createdConflictCopy = false;
+
+    new Set([...base.keys(), ...local.keys(), ...remote.keys()]).forEach((id) => {
+      const before = base.get(id);
+      const localTask = local.get(id);
+      const remoteTask = remote.get(id);
+      const localChanged = !sameTask(localTask, before);
+      const remoteChanged = !sameTask(remoteTask, before);
+
+      if (!localChanged) {
+        if (remoteTask) merged.set(id, remoteTask);
+      } else if (!remoteChanged || sameTask(localTask, remoteTask)) {
+        if (localTask) merged.set(id, localTask);
+      } else if (!localTask) {
+        // 远端已编辑而本机删除：保留远端版本，避免静默丢失对方修改。
+        if (remoteTask) merged.set(id, remoteTask);
+      } else if (!remoteTask) {
+        // 远端删除而本机编辑：保留仍包含用户工作的本机版本。
+        merged.set(id, localTask);
+      } else {
+        merged.set(id, remoteTask);
+        const conflictId = uid();
+        merged.set(conflictId, {
+          ...localTask,
+          id: conflictId,
+          createdAt: Date.now(),
+          project: `${localTask.project}（本机冲突副本）`.slice(0, 60),
+        });
+        createdConflictCopy = true;
+      }
+    });
+
+    return { tasks: Array.from(merged.values()), createdConflictCopy };
+  }
+
   function syncTasks(nextTasks, { announce = false } = {}) {
-    const snapshot = JSON.parse(JSON.stringify(nextTasks));
+    const snapshot = cloneTasks(nextTasks);
     syncQueue = syncQueue
       .catch(() => {})
       .then(async () => {
-        const data = await cloudRequest({
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tasks: snapshot }),
-        });
+        let tasksToSave = snapshot;
+        let data;
+        try {
+          data = await cloudRequest({
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tasks: tasksToSave, expectedUpdatedAt: cloudUpdatedAt }),
+          });
+        } catch (error) {
+          const remote = error.cloudState;
+          if (error.message !== "conflict" || !Array.isArray(remote?.tasks)) throw error;
+          const merged = mergeConcurrentChanges(syncedTasks, snapshot, remote.tasks);
+          tasksToSave = merged.tasks;
+          cloudUpdatedAt = remote.updatedAt ?? null;
+          data = await cloudRequest({
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tasks: tasksToSave, expectedUpdatedAt: cloudUpdatedAt }),
+          });
+          if (sameTask(tasks, snapshot)) {
+            tasks = cloneTasks(tasksToSave);
+            cacheTasks(tasks);
+            renderDaily();
+          }
+          toast(merged.createdConflictCopy
+            ? "检测到同时编辑，已保留本机冲突副本"
+            : "检测到其他设备更新，已安全合并");
+        }
+        cloudUpdatedAt = data.updatedAt ?? null;
+        syncedTasks = cloneTasks(tasksToSave);
         writeSyncMarker(data.updatedAt);
         if (announce) toast("本机任务已安全同步到云端");
         return data;
@@ -264,6 +345,8 @@
 
       const cloudTasks = data.tasks;
       const localTasks = tasks.slice();
+      cloudUpdatedAt = data.updatedAt ?? null;
+      syncedTasks = cloneTasks(cloudTasks);
       const needsLegacyMigration = localTasks.length > 0 && !readSyncMarker();
 
       if (needsLegacyMigration) {
@@ -277,10 +360,11 @@
       }
 
       tasks = cloudTasks;
+      syncedTasks = cloneTasks(cloudTasks);
       cacheTasks(tasks);
       if (data.updatedAt) writeSyncMarker(data.updatedAt);
       renderDaily();
-    } catch (e) {
+    } catch {
       if (e.message !== "unauthorized") {
         toast("当前使用本机缓存，恢复连接后可继续同步");
       }
@@ -295,9 +379,11 @@
       if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
 
       tasks = data.tasks;
+      syncedTasks = cloneTasks(data.tasks);
+      cloudUpdatedAt = data.updatedAt ?? null;
       cacheTasks(tasks);
       if (data.updatedAt) writeSyncMarker(data.updatedAt);
-    } catch (e) {
+    } catch {
       if (e.message !== "unauthorized") {
         toast("最新数据刷新失败，已显示本机缓存");
       }
@@ -409,13 +495,16 @@
 
     const hasNotes = !!t.notes;
     const hasReq = !!t.reqDoc;
+    const safeReqDoc = hasReq ? safeExternalLink(t.reqDoc) : "";
     const hasDetail = hasNotes || hasReq;
     const expanded = expandedIds.has(t.id);
 
     const detail = hasDetail
       ? `<div class="task-detail"${expanded ? "" : " hidden"}>`
         + (hasNotes ? `<p class="task-notes"><span class="dn">备注</span>${escapeHTML(t.notes)}</p>` : "")
-        + (hasReq ? `<p class="task-req"><span class="dn">需求文档</span><a href="${escapeHTML(t.reqDoc)}" target="_blank" rel="noopener">${escapeHTML(t.reqDoc)}</a></p>` : "")
+        + (safeReqDoc
+          ? `<p class="task-req"><span class="dn">需求文档</span><a href="${escapeHTML(safeReqDoc)}" target="_blank" rel="noopener noreferrer">${escapeHTML(t.reqDoc)}</a></p>`
+          : hasReq ? `<p class="task-req"><span class="dn">需求文档</span>${escapeHTML(t.reqDoc)}（链接不可用）</p>` : "")
         + `</div>`
       : "";
 
@@ -427,7 +516,7 @@
       : "";
 
     return `
-      <article class="task-card${grey}" data-id="${t.id}">
+      <article class="task-card${grey}" data-id="${escapeHTML(t.id)}">
         <div class="task-main">
           <div class="task-top">
             <span class="task-name">${escapeHTML(t.project)}</span>
@@ -457,6 +546,14 @@
 
   function escapeHTML(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function safeExternalLink(value) {
+    try {
+      const url = new URL(String(value));
+      return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+    } catch {
+      return "";
+    }
   }
   function fmtMD(iso) {
     const parts = String(iso).split("-");
@@ -493,6 +590,12 @@
     if (!project) { els.project.focus(); return; }
     const hours = parseFloat(els.hours.value);
     if (isNaN(hours) || hours < 0) { toast("请填写有效的耗时"); els.hours.focus(); return; }
+    const reqDoc = els.reqDoc.value.trim();
+    if (reqDoc && !safeExternalLink(reqDoc)) {
+      toast("需求文档仅支持 http 或 https 链接");
+      els.reqDoc.focus();
+      return;
+    }
     const payload = {
       project,
       urgency: currentUrgency,
@@ -502,7 +605,7 @@
       startDate: els.startDate.value || toISO(selectedDate),
       duration: Math.max(1, parseInt(els.duration.value, 10) || 1),
       notes: els.notes.value.trim(),
-      reqDoc: els.reqDoc.value.trim(),
+      reqDoc,
     };
 
     if (editingId) {
@@ -959,12 +1062,12 @@
     try {
       await navigator.clipboard.writeText(text);
       toast("周报已复制到剪贴板");
-    } catch (e) {
+    } catch {
       // 回退方案
       const ta = document.createElement("textarea");
       ta.value = text; document.body.appendChild(ta); ta.select();
       try { document.execCommand("copy"); toast("周报已复制"); }
-      catch (_) { toast("复制失败，请手动选择文本"); }
+      catch { toast("复制失败，请手动选择文本"); }
       document.body.removeChild(ta);
     }
   });
@@ -1003,11 +1106,11 @@
      ============================================================ */
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
-    try { localStorage.setItem(THEME_KEY, theme); } catch (e) {}
+    try { localStorage.setItem(THEME_KEY, theme); } catch {}
   }
   (function initTheme() {
     let theme = "light";
-    try { theme = localStorage.getItem(THEME_KEY) || "light"; } catch (e) {}
+    try { theme = localStorage.getItem(THEME_KEY) || "light"; } catch {}
     applyTheme(theme);
   })();
   $("themeToggle").addEventListener("click", () => {
@@ -1114,7 +1217,7 @@
   }, { passive: true });
 
   (function init() {
-    try { els.userName.value = localStorage.getItem(NAME_KEY) || ""; } catch (e) {}
+    try { els.userName.value = localStorage.getItem(NAME_KEY) || ""; } catch {}
     setUrgency("medium");
     renderHome();
     loadCloudTasks();
