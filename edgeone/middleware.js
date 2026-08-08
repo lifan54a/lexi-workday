@@ -49,11 +49,19 @@ function readCookie(request, name) {
   return match?.[1] ?? "";
 }
 
+function isPublicLoginAsset(pathname) {
+  return pathname === "/favicon.ico"
+    || pathname === "/apple-touch-icon.png"
+    || pathname === "/avatar.png"
+    || pathname === "/pixelblast-static.js"
+    || pathname.startsWith("/icons/");
+}
+
 export async function middleware(context) {
   const { request, next, env } = context;
   const url = new URL(request.url);
 
-  if (url.pathname === "/login") return next();
+  if (url.pathname === "/login" || isPublicLoginAsset(url.pathname)) return next();
 
   if (!env.WEB_PASSWORD || !env.SESSION_SECRET) {
     return new Response("Server authentication is not configured", { status: 503 });

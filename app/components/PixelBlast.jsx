@@ -301,6 +301,22 @@ void main(){
 
 const MAX_CLICKS = 10;
 
+const disposeThreeState = t => {
+  if (!t) return;
+  t.eventTarget?.removeEventListener('pointerdown', t.onPointerDown);
+  t.eventTarget?.removeEventListener('pointermove', t.onPointerMove);
+  t.resizeObserver?.disconnect();
+  t.ownerWindow.cancelAnimationFrame(t.raf);
+  t.touch?.texture?.dispose();
+  t.quad?.geometry.dispose();
+  t.material.dispose();
+  t.composer?.dispose();
+  t.timer?.dispose();
+  t.renderer.dispose();
+  t.renderer.forceContextLoss();
+  t.renderer.domElement.remove();
+};
+
 const PixelBlast = ({
   variant = 'square',
   pixelSize = 3,
@@ -332,6 +348,22 @@ const PixelBlast = ({
 
   const threeRef = useRef(null);
   const prevConfigRef = useRef(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const ownerWindow = container?.ownerDocument.defaultView;
+    if (!container || !ownerWindow?.IntersectionObserver) return;
+    const visibility = visibilityRef.current;
+    const observer = new ownerWindow.IntersectionObserver(([entry]) => {
+      visibility.visible = entry?.isIntersecting ?? true;
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      visibility.visible = true;
+    };
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -352,18 +384,7 @@ const PixelBlast = ({
     }
     if (mustReinit) {
       if (threeRef.current) {
-        const t = threeRef.current;
-        t.eventTarget?.removeEventListener('pointerdown', t.onPointerDown);
-        t.eventTarget?.removeEventListener('pointermove', t.onPointerMove);
-        t.resizeObserver?.disconnect();
-        t.ownerWindow.cancelAnimationFrame(t.raf);
-        t.quad?.geometry.dispose();
-        t.material.dispose();
-        t.composer?.dispose();
-        t.timer?.dispose();
-        t.renderer.dispose();
-        t.renderer.forceContextLoss();
-        if (t.renderer.domElement.parentElement === container) container.removeChild(t.renderer.domElement);
+        disposeThreeState(threeRef.current);
         threeRef.current = null;
       }
       const canvas = ownerDocument.createElement('canvas');
@@ -568,7 +589,7 @@ const PixelBlast = ({
       if (transparent) t.renderer.setClearAlpha(0);
       else t.renderer.setClearColor(0x000000, 1);
       if (t.liquidEffect) {
-        const uStrength = t.liquidEffect;
+        const uStrength = t.liquidEffect.uniforms.get('uStrength');
         if (uStrength) uStrength.value = liquidStrength;
         const uFreq = t.liquidEffect.uniforms.get('uFreq');
         if (uFreq) uFreq.value = liquidWobbleSpeed;
@@ -576,23 +597,6 @@ const PixelBlast = ({
       if (t.touch) t.touch.radiusScale = liquidRadius;
     }
     prevConfigRef.current = cfg;
-    return () => {
-      if (threeRef.current && mustReinit) return;
-      if (!threeRef.current) return;
-      const t = threeRef.current;
-      t.eventTarget?.removeEventListener('pointerdown', t.onPointerDown);
-      t.eventTarget?.removeEventListener('pointermove', t.onPointerMove);
-      t.resizeObserver?.disconnect();
-      t.ownerWindow.cancelAnimationFrame(t.raf);
-      t.quad?.geometry.dispose();
-      t.material.dispose();
-      t.composer?.dispose();
-      t.timer?.dispose();
-      t.renderer.dispose();
-      t.renderer.forceContextLoss();
-      if (t.renderer.domElement.parentElement === container) container.removeChild(t.renderer.domElement);
-      threeRef.current = null;
-    };
   }, [
     antialias,
     liquid,
@@ -616,6 +620,11 @@ const PixelBlast = ({
     speed,
     interactionTarget
   ]);
+
+  useEffect(() => () => {
+    disposeThreeState(threeRef.current);
+    threeRef.current = null;
+  }, []);
 
   return (
     <div

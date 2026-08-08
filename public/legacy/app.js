@@ -9,6 +9,8 @@
   /* -------------------- 常量与存储 -------------------- */
   const STORE_KEY = "paqi_tasks_v1";
   const SYNC_KEY  = "paqi_cloud_sync_v1";
+  const DIRTY_KEY = "paqi_cloud_dirty_v1";
+  const DIRTY_BASE_KEY = "paqi_cloud_dirty_base_v1";
   const THEME_KEY = "paqi_theme";
   const NAME_KEY  = "paqi_name";
 
@@ -74,6 +76,7 @@
   /* -------------------- 状态 -------------------- */
   let tasks = load();
   let syncedTasks = [];
+  let syncLocalBase = [];
   let cloudUpdatedAt = null;
   let selectedDate = new Date();
   let weekBase = getMonday(new Date()); // 当前周周一
@@ -210,6 +213,37 @@
     try { localStorage.setItem(SYNC_KEY, updatedAt || new Date().toISOString()); } catch {}
   }
 
+  function hasUnsyncedChanges() {
+    try { return localStorage.getItem(DIRTY_KEY) === "1"; } catch { return true; }
+  }
+
+  function readDirtyBase() {
+    try {
+      const value = JSON.parse(localStorage.getItem(DIRTY_BASE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch { return []; }
+  }
+
+  function markDirty(baseTasks = syncLocalBase) {
+    try {
+      if (localStorage.getItem(DIRTY_KEY) !== "1") {
+        localStorage.setItem(DIRTY_BASE_KEY, JSON.stringify(baseTasks));
+      }
+      localStorage.setItem(DIRTY_KEY, "1");
+    } catch {}
+  }
+
+  function updateDirtyBase(baseTasks) {
+    try { localStorage.setItem(DIRTY_BASE_KEY, JSON.stringify(baseTasks)); } catch {}
+  }
+
+  function clearDirty() {
+    try {
+      localStorage.removeItem(DIRTY_KEY);
+      localStorage.removeItem(DIRTY_BASE_KEY);
+    } catch {}
+  }
+
   function redirectToLogin() {
     window.location.replace("/login");
   }
@@ -289,7 +323,11 @@
     syncQueue = syncQueue
       .catch(() => {})
       .then(async () => {
-        let tasksToSave = snapshot;
+        // syncLocalBase advances only after a successful save. A later queued
+        // snapshot is therefore rebased on all remote changes merged earlier.
+        const rebased = mergeConcurrentChanges(syncLocalBase, snapshot, syncedTasks);
+        let tasksToSave = rebased.tasks;
+        let createdConflictCopy = rebased.createdConflictCopy;
         let data;
         try {
           data = await cloudRequest({
@@ -300,25 +338,33 @@
         } catch (error) {
           const remote = error.cloudState;
           if (error.message !== "conflict" || !Array.isArray(remote?.tasks)) throw error;
-          const merged = mergeConcurrentChanges(syncedTasks, snapshot, remote.tasks);
+          const merged = mergeConcurrentChanges(syncedTasks, tasksToSave, remote.tasks);
           tasksToSave = merged.tasks;
+          createdConflictCopy = createdConflictCopy || merged.createdConflictCopy;
           cloudUpdatedAt = remote.updatedAt ?? null;
           data = await cloudRequest({
             method: "PUT",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ tasks: tasksToSave, expectedUpdatedAt: cloudUpdatedAt }),
           });
-          if (sameTask(tasks, snapshot)) {
-            tasks = cloneTasks(tasksToSave);
-            cacheTasks(tasks);
-            renderDaily();
-          }
-          toast(merged.createdConflictCopy
+          toast(createdConflictCopy
             ? "检测到同时编辑，已保留本机冲突副本"
             : "检测到其他设备更新，已安全合并");
         }
         cloudUpdatedAt = data.updatedAt ?? null;
         syncedTasks = cloneTasks(tasksToSave);
+        if (sameTask(tasks, snapshot)) {
+          if (!sameTask(tasks, tasksToSave)) {
+            tasks = cloneTasks(tasksToSave);
+            cacheTasks(tasks);
+            renderDaily();
+          }
+          syncLocalBase = cloneTasks(tasksToSave);
+          clearDirty();
+        } else {
+          syncLocalBase = cloneTasks(snapshot);
+          updateDirtyBase(syncLocalBase);
+        }
         writeSyncMarker(data.updatedAt);
         if (announce) toast("本机任务已安全同步到云端");
         return data;
@@ -334,6 +380,7 @@
 
   function save() {
     cacheTasks(tasks);
+    markDirty();
     syncTasks(tasks);
   }
 
@@ -347,13 +394,23 @@
       const localTasks = tasks.slice();
       cloudUpdatedAt = data.updatedAt ?? null;
       syncedTasks = cloneTasks(cloudTasks);
+      const hasDirtyCache = hasUnsyncedChanges();
+      syncLocalBase = hasDirtyCache ? cloneTasks(readDirtyBase()) : cloneTasks(cloudTasks);
       const needsLegacyMigration = localTasks.length > 0 && !readSyncMarker();
+
+      if (hasDirtyCache) {
+        tasks = localTasks;
+        renderDaily();
+        await syncTasks(tasks, { announce: true });
+        return;
+      }
 
       if (needsLegacyMigration) {
         const merged = new Map(cloudTasks.map((task) => [task.id, task]));
         localTasks.forEach((task) => merged.set(task.id, task));
         tasks = Array.from(merged.values());
         cacheTasks(tasks);
+        markDirty(cloudTasks);
         renderDaily();
         await syncTasks(tasks, { announce: true });
         return;
@@ -361,10 +418,11 @@
 
       tasks = cloudTasks;
       syncedTasks = cloneTasks(cloudTasks);
+      syncLocalBase = cloneTasks(cloudTasks);
       cacheTasks(tasks);
       if (data.updatedAt) writeSyncMarker(data.updatedAt);
       renderDaily();
-    } catch {
+    } catch (e) {
       if (e.message !== "unauthorized") {
         toast("当前使用本机缓存，恢复连接后可继续同步");
       }
@@ -375,15 +433,24 @@
     try {
       // 先等待本机尚未完成的保存，避免刚编辑的数据被较旧的云端结果覆盖。
       await syncQueue;
+      if (hasUnsyncedChanges()) {
+        await syncTasks(tasks);
+        if (hasUnsyncedChanges()) {
+          toast("本机仍有尚未同步的数据，已保留本机版本");
+          renderView();
+          return;
+        }
+      }
       const data = await cloudRequest();
       if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
 
       tasks = data.tasks;
       syncedTasks = cloneTasks(data.tasks);
+      syncLocalBase = cloneTasks(data.tasks);
       cloudUpdatedAt = data.updatedAt ?? null;
       cacheTasks(tasks);
       if (data.updatedAt) writeSyncMarker(data.updatedAt);
-    } catch {
+    } catch (e) {
       if (e.message !== "unauthorized") {
         toast("最新数据刷新失败，已显示本机缓存");
       }
@@ -794,16 +861,20 @@
     }
 
     // 按项目分组
-    const projMap = {};
-    monthTasks.forEach((t) => { (projMap[t.project] = projMap[t.project] || []).push(t); });
-    const projKeys = Object.keys(projMap).sort((a, b) => {
-      const sa = projMap[a].map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
-      const sb = projMap[b].map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
+    const projMap = new Map();
+    monthTasks.forEach((t) => {
+      const group = projMap.get(t.project) || [];
+      group.push(t);
+      projMap.set(t.project, group);
+    });
+    const projKeys = Array.from(projMap.keys()).sort((a, b) => {
+      const sa = projMap.get(a).map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
+      const sb = projMap.get(b).map((t) => startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t)).sort()[0];
       return sa.localeCompare(sb);
     });
 
     const rows = projKeys.map((p) => {
-      const arr = projMap[p];
+      const arr = projMap.get(p);
       const c = projectColor(p);
       const monthDays = arr.reduce((n, t) => {
         const visibleStart = startDateOf(t) < monthStartISO ? monthStartISO : startDateOf(t);
@@ -954,14 +1025,16 @@
     `;
 
     // 按项目汇总
-    const byProject = {};
+    const byProject = new Map();
     wk.forEach((t) => {
-      (byProject[t.project] = byProject[t.project] || []).push(t);
+      const group = byProject.get(t.project) || [];
+      group.push(t);
+      byProject.set(t.project, group);
     });
-    const projKeys = Object.keys(byProject).sort((a, b) => sum(byProject[b], (t) => t.hours) - sum(byProject[a], (t) => t.hours));
+    const projKeys = Array.from(byProject.keys()).sort((a, b) => sum(byProject.get(b), (t) => t.hours) - sum(byProject.get(a), (t) => t.hours));
     els.projectBreakdown.innerHTML = projKeys.length
       ? projKeys.map((p) => {
-          const arr = byProject[p];
+          const arr = byProject.get(p);
           const h = sum(arr, (t) => t.hours);
           const pr = Math.round(avg(arr, (t) => t.progress));
           return `
@@ -1013,12 +1086,16 @@
     L.push(`· 高优先级任务：${highN} 项`);
     L.push("");
     L.push("一、按项目汇总");
-    const byProject = {};
-    wk.forEach((t) => (byProject[t.project] = byProject[t.project] || []).push(t));
-    Object.keys(byProject)
-      .sort((a, b) => sum(byProject[b], (t) => t.hours) - sum(byProject[a], (t) => t.hours))
+    const byProject = new Map();
+    wk.forEach((t) => {
+      const group = byProject.get(t.project) || [];
+      group.push(t);
+      byProject.set(t.project, group);
+    });
+    Array.from(byProject.keys())
+      .sort((a, b) => sum(byProject.get(b), (t) => t.hours) - sum(byProject.get(a), (t) => t.hours))
       .forEach((p) => {
-        const arr = byProject[p];
+        const arr = byProject.get(p);
         const h = sum(arr, (t) => t.hours);
         const pr = Math.round(avg(arr, (t) => t.progress));
         L.push(`  - ${p}：工时 ${fmtHours(h)}，平均进度 ${pr}%，任务 ${arr.length} 项`);

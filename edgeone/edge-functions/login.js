@@ -1,8 +1,13 @@
+import { getStore as getBlobStore, PreconditionFailedError } from "@edgeone/pages-blob";
+
 const encoder = new TextEncoder();
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_TOKEN_PURPOSE = "lexi-workday-edgeone-authorized";
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_ATTEMPT_PREFIX = "login-attempts/";
 
-export function loginPage(invalid = false, assetPrefix = "/legacy") {
+export function loginPage(invalid = false, assetPrefix = "/legacy", rateLimited = false) {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -106,7 +111,9 @@ export function loginPage(invalid = false, assetPrefix = "/legacy") {
           <p class="private">Secure access</p>
           <h1>欢迎回来</h1>
           <p class="intro">输入访问密码，继续进入你的排期台。</p>
-          ${invalid ? '<p class="error" role="alert">密码错误，请检查后重试。</p>' : ""}
+          ${rateLimited
+            ? '<p class="error" role="alert">尝试次数过多，请稍后再试。</p>'
+            : invalid ? '<p class="error" role="alert">密码错误，请检查后重试。</p>' : ""}
           <label for="password">访问密码</label>
           <div class="password-field">
             <input id="password" type="password" name="password" autocomplete="current-password" placeholder="请输入密码" autofocus required>
@@ -180,6 +187,54 @@ function safeEqual(left, right) {
   return result === 0;
 }
 
+function getAuthStore(env) {
+  return env.LEXI_AUTH_BLOB ?? getBlobStore("lexi-workday-auth");
+}
+
+async function clientKey(request, secret) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const address = request.headers.get("cf-connecting-ip") ?? forwarded ?? "unknown";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(address));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 40);
+}
+
+async function reserveLoginAttempt(request, env) {
+  const now = Date.now();
+  const fingerprint = await clientKey(request, env.SESSION_SECRET);
+  const windowStart = Math.floor(now / LOGIN_WINDOW_MS) * LOGIN_WINDOW_MS;
+  const prefix = `${LOGIN_ATTEMPT_PREFIX}${fingerprint}/`;
+  const store = getAuthStore(env);
+  let reservedSlot = LOGIN_MAX_ATTEMPTS + 1;
+  for (let slot = 1; slot <= LOGIN_MAX_ATTEMPTS + 1; slot += 1) {
+    const slotKey = `${prefix}slot-${slot}.json`;
+    try {
+      const existing = await store.get(slotKey, { type: "json", consistency: "strong" });
+      if (existing && existing.windowStart !== windowStart) await store.delete(slotKey);
+      await store.setJSON(slotKey, { attemptedAt: now, windowStart }, { onlyIfNew: true });
+      reservedSlot = slot;
+      break;
+    } catch (error) {
+      if (!(error instanceof PreconditionFailedError) && error?.code !== "PRECONDITION_FAILED") throw error;
+    }
+  }
+
+  return {
+    limited: reservedSlot > LOGIN_MAX_ATTEMPTS,
+    retryAfter: Math.max(1, Math.ceil((windowStart + LOGIN_WINDOW_MS - now) / 1000)),
+    async markSuccess() {
+      await Promise.all(Array.from({ length: LOGIN_MAX_ATTEMPTS + 1 }, (_, index) =>
+        store.delete(`${prefix}slot-${index + 1}.json`)));
+    },
+  };
+}
+
 export async function isSessionTokenValid(token, secret, now = Date.now()) {
   const separator = token.indexOf(".");
   if (separator <= 0) return false;
@@ -207,6 +262,18 @@ export async function onRequest({ request, env }) {
     return new Response("Method not allowed", { status: 405 });
   }
 
+  const attempt = await reserveLoginAttempt(request, env);
+  if (attempt.limited) {
+    return new Response(loginPage(false, "", true), {
+      status: 429,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "retry-after": String(attempt.retryAfter),
+      },
+    });
+  }
+
   const form = await request.formData();
   const password = String(form.get("password") ?? "");
   if (!safeEqual(password, env.WEB_PASSWORD)) {
@@ -216,6 +283,7 @@ export async function onRequest({ request, env }) {
     });
   }
 
+  await attempt.markSuccess();
   const token = await createSessionToken(env.SESSION_SECRET);
   return new Response(null, {
     status: 303,
