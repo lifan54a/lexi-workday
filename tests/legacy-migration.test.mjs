@@ -31,6 +31,7 @@ test('Cloud Functions retain the KV tasks through the authenticated edge bridge'
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options)=>{
     assert.equal(new URL(url).pathname,'/api/legacy-tasks');
+    assert.equal(new URL(url).origin,'https://work.yoube.cloud');
     assert.match(options.headers.cookie,/^lexi_session=/);
     return Response.json({tasks:[task],updatedAt:'legacy-v1'});
   };
@@ -60,4 +61,20 @@ test('after a durable snapshot the old KV service is no longer required',async()
     assert.equal(response.status,200);
     assert.deepEqual((await response.json()).tasks,[task]);
   } finally {globalThis.fetch=originalFetch;}
+});
+
+test('Node sync ignores an edge-only global KV compatibility binding',async()=>{
+  const originalFetch=globalThis.fetch;
+  const originalKV=globalThis.LEXI_KV;
+  globalThis.LEXI_KV={get(){throw new Error('edge KV must not be called from Node');}};
+  globalThis.fetch=async()=>Response.json({tasks:[task],updatedAt:'legacy-v1'});
+  try {
+    const response=await tasks({request:await request(),env:{SESSION_SECRET:secret,LEXI_BLOB:store()}});
+    assert.equal(response.status,200);
+    assert.deepEqual((await response.json()).tasks,[task]);
+  } finally {
+    globalThis.fetch=originalFetch;
+    if(originalKV===undefined) delete globalThis.LEXI_KV;
+    else globalThis.LEXI_KV=originalKV;
+  }
 });

@@ -9,7 +9,7 @@ const task = (patch = {}) => ({id:'a', project:'测试项目', progress:0, notes
 
 function client({ initial = [task()], remote = initial, offline = false, storageFails = false, beforePut, conflictCount = 0 } = {}) {
   const storage = new Map([['paqi_tasks_v1', JSON.stringify(initial)], ['paqi_cloud_sync_v1', 'v1']]);
-  let server = structuredClone(remote), version = 1, writes = 0;
+  let server = structuredClone(remote), version = 1, writes = 0, repairEpoch = null;
   const messages = [], events = {};
   const context = vm.createContext({
     window: {addEventListener: (name, fn) => { events[name] = fn; }, location: {replace() {}}},
@@ -22,13 +22,13 @@ function client({ initial = [task()], remote = initial, offline = false, storage
     renderDaily() {}, toast: msg => messages.push(msg),
     fetch: async (_url, options) => {
       if (offline) throw new Error('offline');
-      if (options.method !== 'PUT') return {status:200,ok:true,json:async()=>({tasks:structuredClone(server),updatedAt:`v${version}`})};
+      if (options.method !== 'PUT') return {status:200,ok:true,json:async()=>({tasks:structuredClone(server),updatedAt:`v${version}`,repairEpoch})};
       writes += 1;
       const body = JSON.parse(options.body);
       if (beforePut) await beforePut({body, writes});
       if (conflictCount > 0 || body.expectedUpdatedAt !== `v${version}`) {
         if (conflictCount > 0) { conflictCount -= 1; version += 1; }
-        return {status:409,ok:false,json:async()=>({tasks:structuredClone(server),updatedAt:`v${version}`})};
+        return {status:409,ok:false,json:async()=>({tasks:structuredClone(server),updatedAt:`v${version}`,repairEpoch})};
       }
       server = structuredClone(body.tasks); version += 1;
       return {status:200,ok:true,json:async()=>({tasks:structuredClone(server),updatedAt:`v${version}`})};
@@ -37,13 +37,13 @@ function client({ initial = [task()], remote = initial, offline = false, storage
   vm.runInContext(`
     const STORE_KEY='paqi_tasks_v1', SYNC_KEY='paqi_cloud_sync_v1', DIRTY_KEY='paqi_cloud_dirty_v1', DIRTY_BASE_KEY='paqi_cloud_dirty_base_v1';
     let tasks=load(), syncLocalBase=readDirtyBase() ?? cloneTasks(tasks), syncedTasks=cloneTasks(syncLocalBase);
-    let dirty=hasUnsyncedChanges(), localCacheSaved=true, cloudLoaded=false, cloudUpdatedAt=null;
+    let dirty=hasUnsyncedChanges(), localCacheSaved=true, cloudLoaded=false, cloudUpdatedAt=null, repairEpoch=null;
     ${persistence}
     globalThis.api={loadCloudTasks, save, syncTasks, mergeConcurrentChanges, sameTask,
       flush:()=>syncQueue, get:()=>tasks, set:(value)=>{tasks=value;}, dirty:()=>dirty};
   `, context);
   return {api:context.api, storage, messages, events, remote:()=>server, writes:()=>writes,
-    reconnect() { offline = false; }, serverEdit(value) {server=structuredClone(value);version+=1;} };
+    reconnect() { offline = false; }, serverEdit(value, epoch = null) {server=structuredClone(value);version+=1;repairEpoch=epoch;} };
 }
 
 test('offline startup retains the cached ancestor and does not manufacture conflict copies', async () => {
@@ -114,4 +114,25 @@ test('connectivity recovery automatically retries pending changes', async () => 
   const c=client({offline:true});c.api.set([task({progress:20})]);c.api.save();await c.api.flush();
   c.reconnect();c.events.online();await c.api.flush();
   assert.deepEqual(c.remote(),[task({progress:20})]);
+});
+
+test('cleanup archives stale local intent and adopts the approved cloud list', async () => {
+  const c=client({offline:true});
+  c.api.set([]);c.api.save();await c.api.flush();
+  c.serverEdit([task({progress:100})],'cleanup-test');c.reconnect();
+  await c.api.loadCloudTasks();
+  assert.equal(c.api.get()[0].progress,100);
+  assert.equal(c.api.dirty(),false);
+  assert.ok(c.storage.has('paqi_recovery_before_cleanup_cleanup-test'));
+  await c.api.syncTasks(c.api.get());
+  assert.equal(c.writes(),0);
+});
+
+test('a repair during an in-flight save stops stale replay', async () => {
+  const c=client();await c.api.loadCloudTasks();
+  c.api.set([]);c.serverEdit([task({progress:100})],'cleanup-test');
+  c.api.save();await c.api.flush();
+  assert.deepEqual(c.remote(),[task({progress:100})]);
+  assert.equal(c.api.dirty(),false);
+  assert.equal(c.writes(),1);
 });

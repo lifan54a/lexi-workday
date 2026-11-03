@@ -321,6 +321,27 @@ test("old clients cannot manufacture new conflict-copy task IDs", async () => {
   assert.equal(blob.values.size,0);
 });
 
+test("cleanup rejects stale clients even after they learn the latest state version",async()=>{
+  const blob=new BlobStore();
+  const env={SESSION_SECRET:secret,LEXI_KV:emptyLegacyStore,LEXI_BLOB:blob};
+  const added=await(await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask()],expectedUpdatedAt:null,
+  }),env})).json();
+  const cleaned=await(await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[],expectedUpdatedAt:added.updatedAt,clientVersion:2,repairEpoch:null,cleanupEpoch:"cleanup-test",
+  }),env})).json();
+  assert.equal(cleaned.repairEpoch,"cleanup-test");
+  const stale=await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[],expectedUpdatedAt:cleaned.updatedAt,
+  }),env});
+  assert.equal(stale.status,409);
+  assert.equal((await stale.json()).code,"RELOAD_REQUIRED");
+  const current=await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[],expectedUpdatedAt:cleaned.updatedAt,clientVersion:2,repairEpoch:"cleanup-test",
+  }),env});
+  assert.equal(current.status,200);
+});
+
 test("task writes reject impossible calendar dates", async () => {
   const response = await tasksRequest({
     request: await authorizedRequest("PUT", {

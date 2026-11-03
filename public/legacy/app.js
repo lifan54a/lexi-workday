@@ -77,6 +77,7 @@
   let tasks = load();
   let syncLocalBase = readDirtyBase() ?? cloneTasks(tasks);
   let dirty = hasUnsyncedChanges();
+  let repairEpoch = readSyncState()?.repairEpoch ?? null;
   let localCacheSaved = true;
   let cloudLoaded = false;
   let cloudUpdatedAt = null;
@@ -211,7 +212,7 @@
   }
 
   function cacheTasks(nextTasks) {
-    const state = { tasks: nextTasks, base: syncLocalBase, dirty, updatedAt: cloudUpdatedAt };
+    const state = { tasks: nextTasks, base: syncLocalBase, dirty, updatedAt: cloudUpdatedAt, repairEpoch };
     try {
       // One atomic write keeps the tasks and their merge ancestor together.
       localStorage.setItem("paqi_sync_state_v2", JSON.stringify(state));
@@ -255,6 +256,24 @@
   function markDirty() {
     dirty = true;
     cacheTasks(tasks);
+  }
+
+  function adoptRepairState(data) {
+    if (!data.repairEpoch || data.repairEpoch === repairEpoch) return false;
+    try {
+      localStorage.setItem(`paqi_recovery_before_cleanup_${data.repairEpoch}`, JSON.stringify({ tasks, base: syncLocalBase }));
+    } catch {
+      if (dirty) throw new Error("cannot back up unsynced changes before cleanup");
+    }
+    tasks = cloneTasks(data.tasks);
+    syncLocalBase = cloneTasks(data.tasks);
+    cloudUpdatedAt = data.updatedAt ?? null;
+    repairEpoch = data.repairEpoch;
+    dirty = false;
+    cloudLoaded = true;
+    cacheTasks(tasks);
+    renderDaily();
+    return true;
   }
 
   function redirectToLogin() { window.location.replace("/login"); }
@@ -330,6 +349,7 @@
       bootstrapUsed = true;
       const data = bootstrap ? await bootstrap : await cloudRequest();
       if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
+      if (adoptRepairState(data)) return data;
       const legacyMigration = tasks.length > 0 && !readSyncMarker() && !readSyncState();
       if (dirty || legacyMigration) {
         tasks = mergeConcurrentChanges(syncLocalBase, tasks, data.tasks).tasks;
@@ -358,10 +378,11 @@
         let data;
         try {
           data = await cloudRequest({ method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tasks: snapshot, expectedUpdatedAt: cloudUpdatedAt }) });
+            body: JSON.stringify({ tasks: snapshot, expectedUpdatedAt: cloudUpdatedAt, clientVersion: 2, repairEpoch }) });
         } catch (error) {
           if (error.message !== "conflict" || !Array.isArray(error.cloudState?.tasks)) throw error;
           const remote = error.cloudState;
+          if (adoptRepairState(remote)) return remote;
           const merged = mergeConcurrentChanges(syncLocalBase, tasks, remote.tasks);
           tasks = merged.tasks;
           syncLocalBase = cloneTasks(remote.tasks);
@@ -376,6 +397,7 @@
         tasks = mergeConcurrentChanges(snapshot, tasks, accepted).tasks;
         syncLocalBase = cloneTasks(accepted);
         cloudUpdatedAt = data.updatedAt ?? null;
+        repairEpoch = data.repairEpoch ?? repairEpoch;
         dirty = !sameTask(tasks, accepted);
         cacheTasks(tasks);
         writeSyncMarker(data.updatedAt);

@@ -258,7 +258,9 @@ async function readState(env, previous = null, request) {
     value: previousOperations.get(key) ?? await storageCall(stateStore.get(key, { type: "json", consistency: "strong" }), "operation:get"),
   }));
   const deletedIds = new Set(latestSnapshot?.value.deletedIds ?? []);
+  let repairEpoch = latestSnapshot?.value.repairEpoch ?? null;
   for (const operation of operations) {
+    if (typeof operation.value.repairEpoch === "string") repairEpoch = operation.value.repairEpoch;
     for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
   }
   const tasks = operations.reduce((current, operation) => applyOperation(current, operation.value), baseTasks)
@@ -268,6 +270,7 @@ async function readState(env, previous = null, request) {
   return {
     tasks,
     deletedIds,
+    repairEpoch,
     legacy,
     snapshotValues: new Map(snapshots.map((snapshot) => [snapshot.key, snapshot.value])),
     updatedAt: await stateVersion(versionSeed, operationKeys),
@@ -310,16 +313,23 @@ async function compactState(current) {
   );
   const throughKey = compactable.at(-1).key;
   const deletedIds = new Set(current.latestSnapshot?.value.deletedIds ?? []);
+  let repairEpoch = current.latestSnapshot?.value.repairEpoch ?? null;
   for (const operation of compactable) {
+    if (typeof operation.value.repairEpoch === "string") repairEpoch = operation.value.repairEpoch;
     for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
   }
   const snapshotKey = `${SNAPSHOT_PREFIX}${String(now).padStart(13, "0")}_${crypto.randomUUID().replaceAll("-", "")}.json`;
   await current.stateStore.setJSON(
     snapshotKey,
-    { tasks: tasks.filter((task) => !deletedIds.has(task.id)), deletedIds: [...deletedIds], throughKey, createdAt: now },
+    { tasks: tasks.filter((task) => !deletedIds.has(task.id)), deletedIds: [...deletedIds], repairEpoch, throughKey, createdAt: now },
     { onlyIfNew: true },
   );
   return true;
+}
+
+function publicState(state) {
+  return { tasks: state.tasks, updatedAt: state.updatedAt,
+    ...(state.repairEpoch ? { repairEpoch: state.repairEpoch } : {}) };
 }
 
 export async function onRequest({ request, env }) {
@@ -335,8 +345,7 @@ export async function onRequest({ request, env }) {
 
   if (request.method === "GET") {
     try {
-      const { tasks, updatedAt } = await readState(env, null, request);
-      return json({ tasks, updatedAt });
+      return json(publicState(await readState(env, null, request)));
     } catch (error) {
       console.error("Task read failed", { requestId, code: error?.code, message: error?.message });
       return json({ error: "task read failed", code: "READ_FAILED", requestId,
@@ -357,6 +366,10 @@ export async function onRequest({ request, env }) {
     if (!(body.expectedUpdatedAt === null || typeof body.expectedUpdatedAt === "string")) {
       return json({ error: "expectedUpdatedAt is required" }, 428);
     }
+    if (body.cleanupEpoch !== undefined && (body.clientVersion !== 2
+      || typeof body.cleanupEpoch !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(body.cleanupEpoch))) {
+      return json({ error: "invalid cleanup version" }, 400);
+    }
 
     let current;
     try {
@@ -365,20 +378,23 @@ export async function onRequest({ request, env }) {
       return json({ error: "stored task data is invalid" }, 500);
     }
     if (current.updatedAt !== body.expectedUpdatedAt) {
-      return json({ error: "task state changed", tasks: current.tasks, updatedAt: current.updatedAt }, 409);
+      return json({ error: "task state changed", ...publicState(current) }, 409);
+    }
+    if (current.repairEpoch && (body.clientVersion !== 2 || body.repairEpoch !== current.repairEpoch)) {
+      return json({ error: "reload required", code: "RELOAD_REQUIRED", ...publicState(current) }, 409);
     }
 
     const currentIds = new Set(current.tasks.map((task) => task.id));
     if (body.tasks.some((task) => !currentIds.has(task.id) && !current.deletedIds.has(task.id)
       && /（(?:本机|并发)冲突副本）/.test(task.project))) {
-      return json({ error: "refresh required", code: "LEGACY_CLIENT", tasks: current.tasks, updatedAt: current.updatedAt }, 409);
+      return json({ error: "refresh required", code: "LEGACY_CLIENT", ...publicState(current) }, 409);
     }
 
     // Old tabs/devices can upload records which were deliberately removed.
     // Persist deletion tombstones through compaction so they cannot resurrect.
     const desiredTasks = body.tasks.filter((task) => !current.deletedIds.has(task.id));
     const changes = taskChanges(current.tasks, desiredTasks);
-    if (changes.length === 0) return json({ ok: true, tasks: current.tasks, updatedAt: current.updatedAt });
+    if (changes.length === 0 && !body.cleanupEpoch) return json({ ok: true, ...publicState(current) });
 
     const previousKey = current.operationKeys.at(-1) ?? current.latestSnapshot?.value.throughKey;
     const timestamp = Math.max(Date.now(), previousKey ? operationTimestamp(previousKey) + 1 : 0);
@@ -387,7 +403,7 @@ export async function onRequest({ request, env }) {
     stage = "write";
     await storageCall(current.stateStore.setJSON(
       operationKey,
-      { id: operationId, changes },
+      { id: operationId, changes, ...(body.cleanupEpoch ? { repairEpoch: body.cleanupEpoch } : {}) },
       { onlyIfNew: true },
     ), "write");
     // Reuse already-read history. Reading every operation a second time can
@@ -399,7 +415,7 @@ export async function onRequest({ request, env }) {
     } catch (error) {
       console.error("Task history maintenance failed", { requestId, code: error?.code, message: error?.message });
     }
-    return json({ ok: true, tasks: finalState.tasks, updatedAt: finalState.updatedAt });
+    return json({ ok: true, ...publicState(finalState) });
   }
 
   return json({ error: "method not allowed" }, 405, { allow: "GET, PUT" });
