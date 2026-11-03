@@ -17,8 +17,9 @@ function getLegacyStore(env, request) {
   // KV is only available at the edge. Keep a read-only authenticated bridge
   // until a durable Blob snapshot includes the original KV records.
   return { async get() {
-    const response = await fetch(new URL("/api/legacy-tasks", request.url), {
+    const response = await fetch(new URL("/api/legacy-tasks", env.LEXI_PUBLIC_ORIGIN || "https://work.yoube.cloud"), {
       headers: { cookie: request.headers.get("cookie") ?? "" }, cache: "no-store",
+      signal: AbortSignal.timeout(6000),
     });
     if (!response.ok) throw new Error(`Legacy task read failed (${response.status})`);
     return response.text();
@@ -189,9 +190,23 @@ function parseLegacyState(raw) {
 }
 
 async function listKeys(store, prefix) {
-  const result = await store.list({ prefix, consistency: "strong" });
+  const result = await storageCall(store.list({ prefix, consistency: "strong" }), `list:${prefix}`);
   const entries = result.blobs ?? result.keys ?? [];
   return entries.map((entry) => entry.key).sort();
+}
+
+async function storageCall(promise, stage) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`Storage operation timed out: ${stage}`);
+        error.code = "STORAGE_TIMEOUT";
+        error.stage = stage;
+        reject(error);
+      }, 6000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
 async function stateVersion(legacyVersion, operationKeys) {
@@ -209,7 +224,7 @@ async function readState(env, previous = null, request) {
   const snapshotKeys = await listKeys(stateStore, SNAPSHOT_PREFIX);
   const snapshots = await Promise.all(snapshotKeys.map(async (key) => ({
     key,
-    value: previous?.snapshotValues?.get(key) ?? await stateStore.get(key, { type: "json", consistency: "strong" }),
+    value: previous?.snapshotValues?.get(key) ?? await storageCall(stateStore.get(key, { type: "json", consistency: "strong" }), "snapshot:get"),
   })));
   for (const snapshot of snapshots) {
     const value = snapshot.value;
@@ -229,7 +244,7 @@ async function readState(env, previous = null, request) {
   const previousOperations = new Map(previous?.operations?.map((operation) => [operation.key, operation.value]) ?? []);
   const operations = await Promise.all(operationKeys.map(async (key) => ({
     key,
-    value: previousOperations.get(key) ?? await stateStore.get(key, { type: "json", consistency: "strong" }),
+    value: previousOperations.get(key) ?? await storageCall(stateStore.get(key, { type: "json", consistency: "strong" }), "operation:get"),
   })));
   const deletedIds = new Set(latestSnapshot?.value.deletedIds ?? []);
   for (const operation of operations) {
@@ -312,7 +327,8 @@ export async function onRequest({ request, env }) {
       return json({ tasks, updatedAt });
     } catch (error) {
       console.error("Task read failed", { requestId, code: error?.code, message: error?.message });
-      return json({ error: "task read failed", code: "READ_FAILED", requestId, causeCode: error?.code ?? error?.name }, 503);
+      return json({ error: "task read failed", code: "READ_FAILED", requestId,
+        causeCode: error?.code ?? error?.name, stage: error?.stage }, 503);
     }
   }
 
@@ -357,11 +373,11 @@ export async function onRequest({ request, env }) {
     const operationId = `${String(timestamp).padStart(13, "0")}_${requestId}`;
     const operationKey = `${OPERATION_PREFIX}${operationId}.json`;
     stage = "write";
-    await current.stateStore.setJSON(
+    await storageCall(current.stateStore.setJSON(
       operationKey,
       { id: operationId, changes },
       { onlyIfNew: true },
-    );
+    ), "write");
     // Reuse already-read history. Reading every operation a second time can
     // exceed the edge subrequest limit while GET still works normally.
     stage = "read-after-write";
