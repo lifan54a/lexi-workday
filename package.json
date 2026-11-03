@@ -1,5 +1,6 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "lexi-workday",
+  "description": "Lexi's workday 排期台：每日任务记录、月度排期、自动周报与云端同步。",
   "version": "0.1.0",
   "private": true,
   "engines": {
