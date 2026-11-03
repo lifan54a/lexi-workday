@@ -80,7 +80,7 @@ function json(body, status = 200, extraHeaders = {}) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
-      "x-lexi-sync-version": "20261103-cloud1",
+      "x-lexi-sync-version": "20261103-cloud2",
       ...extraHeaders,
     },
   });
@@ -312,6 +312,7 @@ async function compactState(current) {
 }
 
 export async function onRequest({ request, env }) {
+  console.info("Task sync request started", { method: request.method });
   const random = new Uint8Array(16);
   crypto.getRandomValues(random);
   const requestId = Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("");
