@@ -75,8 +75,10 @@
 
   /* -------------------- 状态 -------------------- */
   let tasks = load();
-  let syncedTasks = [];
-  let syncLocalBase = [];
+  let syncLocalBase = readDirtyBase() ?? cloneTasks(tasks);
+  let dirty = hasUnsyncedChanges();
+  let localCacheSaved = true;
+  let cloudLoaded = false;
   let cloudUpdatedAt = null;
   let selectedDate = new Date();
   let weekBase = getMonday(new Date()); // 当前周周一
@@ -193,16 +195,42 @@
   }
 
   /* -------------------- 持久化 -------------------- */
+  function readSyncState() {
+    try {
+      const state = JSON.parse(localStorage.getItem("paqi_sync_state_v2") || "null");
+      return state && Array.isArray(state.tasks) && Array.isArray(state.base) ? state : null;
+    } catch { return null; }
+  }
+
   function load() {
     try {
-      const raw = localStorage.getItem(STORE_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      return Array.isArray(arr) ? arr : [];
+      const state = readSyncState();
+      const value = state?.tasks ?? JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
+      return Array.isArray(value) ? value : [];
     } catch { return []; }
   }
 
   function cacheTasks(nextTasks) {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(nextTasks)); } catch {}
+    const state = { tasks: nextTasks, base: syncLocalBase, dirty, updatedAt: cloudUpdatedAt };
+    try {
+      // One atomic write keeps the tasks and their merge ancestor together.
+      localStorage.setItem("paqi_sync_state_v2", JSON.stringify(state));
+      localCacheSaved = true;
+    } catch {
+      localCacheSaved = false;
+    }
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(nextTasks));
+      if (dirty) {
+        localStorage.setItem(DIRTY_BASE_KEY, JSON.stringify(syncLocalBase));
+        localStorage.setItem(DIRTY_KEY, "1");
+      } else {
+        localStorage.removeItem(DIRTY_KEY);
+        localStorage.removeItem(DIRTY_BASE_KEY);
+      }
+      localCacheSaved = true;
+    } catch { /* The atomic v2 record may still be safely persisted. */ }
+    return localCacheSaved;
   }
 
   function readSyncMarker() {
@@ -214,68 +242,54 @@
   }
 
   function hasUnsyncedChanges() {
-    try { return localStorage.getItem(DIRTY_KEY) === "1"; } catch { return true; }
+    try { return readSyncState()?.dirty ?? localStorage.getItem(DIRTY_KEY) === "1"; } catch { return true; }
   }
 
   function readDirtyBase() {
     try {
-      const value = JSON.parse(localStorage.getItem(DIRTY_BASE_KEY) || "[]");
-      return Array.isArray(value) ? value : [];
-    } catch { return []; }
+      const value = readSyncState()?.base ?? JSON.parse(localStorage.getItem(DIRTY_BASE_KEY) || "null");
+      return Array.isArray(value) ? value : null;
+    } catch { return null; }
   }
 
-  function markDirty(baseTasks = syncLocalBase) {
-    try {
-      if (localStorage.getItem(DIRTY_KEY) !== "1") {
-        localStorage.setItem(DIRTY_BASE_KEY, JSON.stringify(baseTasks));
-      }
-      localStorage.setItem(DIRTY_KEY, "1");
-    } catch {}
+  function markDirty() {
+    dirty = true;
+    cacheTasks(tasks);
   }
 
-  function updateDirtyBase(baseTasks) {
-    try { localStorage.setItem(DIRTY_BASE_KEY, JSON.stringify(baseTasks)); } catch {}
-  }
-
-  function clearDirty() {
-    try {
-      localStorage.removeItem(DIRTY_KEY);
-      localStorage.removeItem(DIRTY_BASE_KEY);
-    } catch {}
-  }
-
-  function redirectToLogin() {
-    window.location.replace("/login");
-  }
+  function redirectToLogin() { window.location.replace("/login"); }
 
   async function cloudRequest(options = {}) {
-    const response = await fetch("/api/tasks", {
-      cache: "no-store",
-      credentials: "same-origin",
-      ...options,
-    });
+    const response = await fetch("/api/tasks", { cache: "no-store", credentials: "same-origin", ...options });
     if (response.status === 401) {
       redirectToLogin();
       throw new Error("unauthorized");
     }
-    if (response.status === 409) {
-      const state = await response.json();
-      const error = new Error("conflict");
-      error.cloudState = state;
+    let data;
+    try { data = await response.json(); } catch { data = {}; }
+    if (!response.ok) {
+      const error = new Error(response.status === 409 ? "conflict" : "cloud unavailable");
+      error.status = response.status;
+      error.code = data.code;
+      error.requestId = data.requestId;
+      if (response.status === 409) error.cloudState = data;
       throw error;
     }
-    if (!response.ok) throw new Error(`cloud unavailable (${response.status})`);
-    return response.json();
+    return data;
   }
 
   let syncQueue = Promise.resolve();
+  let cloudLoadPromise = null;
+  let bootstrapUsed = false;
 
-  function cloneTasks(value) {
-    return JSON.parse(JSON.stringify(value));
-  }
+  function cloneTasks(value) { return JSON.parse(JSON.stringify(value)); }
 
   function sameTask(left, right) {
-    return JSON.stringify(left) === JSON.stringify(right);
+    const canonical = (value) => value && typeof value === "object"
+      ? Array.isArray(value) ? value.map(canonical)
+        : Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+      : value;
+    return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
   }
 
   function mergeConcurrentChanges(baseTasks, localTasks, remoteTasks) {
@@ -283,180 +297,130 @@
     const local = new Map(localTasks.map((task) => [task.id, task]));
     const remote = new Map(remoteTasks.map((task) => [task.id, task]));
     const merged = new Map();
-    let createdConflictCopy = false;
-
-    new Set([...base.keys(), ...local.keys(), ...remote.keys()]).forEach((id) => {
-      const before = base.get(id);
-      const localTask = local.get(id);
-      const remoteTask = remote.get(id);
-      const localChanged = !sameTask(localTask, before);
-      const remoteChanged = !sameTask(remoteTask, before);
-
-      if (!localChanged) {
-        if (remoteTask) merged.set(id, remoteTask);
-      } else if (!remoteChanged || sameTask(localTask, remoteTask)) {
-        if (localTask) merged.set(id, localTask);
-      } else if (!localTask) {
-        // 远端已编辑而本机删除：保留远端版本，避免静默丢失对方修改。
-        if (remoteTask) merged.set(id, remoteTask);
-      } else if (!remoteTask) {
-        // 远端删除而本机编辑：保留仍包含用户工作的本机版本。
-        merged.set(id, localTask);
+    let hadConflicts = false;
+    for (const id of new Set([...base.keys(), ...local.keys(), ...remote.keys()])) {
+      const before = base.get(id), mine = local.get(id), theirs = remote.get(id);
+      if (sameTask(mine, before)) {
+        if (theirs) merged.set(id, theirs);
+      } else if (sameTask(theirs, before) || sameTask(mine, theirs)) {
+        if (mine) merged.set(id, mine);
+      } else if (!mine || !theirs) {
+        // A deliberate deletion wins over an edit based on an older version.
+        // Never resurrect a deleted record or create a second ID for it.
+        hadConflicts = true;
       } else {
-        merged.set(id, remoteTask);
-        const conflictId = uid();
-        merged.set(conflictId, {
-          ...localTask,
-          id: conflictId,
-          createdAt: Date.now(),
-          project: `${localTask.project}（本机冲突副本）`.slice(0, 60),
-        });
-        createdConflictCopy = true;
+        const combined = { ...theirs };
+        for (const field of new Set([...Object.keys(before || {}), ...Object.keys(mine)])) {
+          if (!sameTask(mine[field], before?.[field])) {
+            if (!sameTask(theirs[field], before?.[field]) && !sameTask(mine[field], theirs[field])) hadConflicts = true;
+            if (mine[field] === undefined) delete combined[field];
+            else combined[field] = mine[field];
+          }
+        }
+        merged.set(id, combined);
       }
-    });
-
-    return { tasks: Array.from(merged.values()), createdConflictCopy };
+    }
+    return { tasks: Array.from(merged.values()), hadConflicts };
   }
 
-  function syncTasks(nextTasks, { announce = false } = {}) {
-    const snapshot = cloneTasks(nextTasks);
-    syncQueue = syncQueue
-      .catch(() => {})
-      .then(async () => {
-        // syncLocalBase advances only after a successful save. A later queued
-        // snapshot is therefore rebased on all remote changes merged earlier.
-        const rebased = mergeConcurrentChanges(syncLocalBase, snapshot, syncedTasks);
-        let tasksToSave = rebased.tasks;
-        let createdConflictCopy = rebased.createdConflictCopy;
+  async function loadCloudTasks() {
+    if (cloudLoadPromise) return cloudLoadPromise;
+    cloudLoadPromise = (async () => {
+      const bootstrap = !bootstrapUsed && window.__lexiCloudTasksPromise;
+      bootstrapUsed = true;
+      const data = bootstrap ? await bootstrap : await cloudRequest();
+      if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
+      const legacyMigration = tasks.length > 0 && !readSyncMarker() && !readSyncState();
+      if (dirty || legacyMigration) {
+        tasks = mergeConcurrentChanges(syncLocalBase, tasks, data.tasks).tasks;
+        dirty = true;
+      } else tasks = cloneTasks(data.tasks);
+      syncLocalBase = cloneTasks(data.tasks);
+      cloudUpdatedAt = data.updatedAt ?? null;
+      cloudLoaded = true;
+      cacheTasks(tasks);
+      writeSyncMarker(data.updatedAt);
+      renderDaily();
+      return data;
+    })();
+    try { return await cloudLoadPromise; }
+    finally { cloudLoadPromise = null; }
+  }
+
+  function syncTasks(_nextTasks, { announce = false } = {}) {
+    // Process the latest state, not stale queued snapshots. A later deletion
+    // must never be overwritten by an earlier save finishing out of order.
+    syncQueue = syncQueue.catch(() => {}).then(async () => {
+      if (!dirty) return null;
+      if (!cloudLoaded) await loadCloudTasks();
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const snapshot = cloneTasks(tasks);
         let data;
         try {
-          data = await cloudRequest({
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tasks: tasksToSave, expectedUpdatedAt: cloudUpdatedAt }),
-          });
+          data = await cloudRequest({ method: "PUT", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tasks: snapshot, expectedUpdatedAt: cloudUpdatedAt }) });
         } catch (error) {
+          if (error.message !== "conflict" || !Array.isArray(error.cloudState?.tasks)) throw error;
           const remote = error.cloudState;
-          if (error.message !== "conflict" || !Array.isArray(remote?.tasks)) throw error;
-          const merged = mergeConcurrentChanges(syncedTasks, tasksToSave, remote.tasks);
-          tasksToSave = merged.tasks;
-          createdConflictCopy = createdConflictCopy || merged.createdConflictCopy;
+          const merged = mergeConcurrentChanges(syncLocalBase, tasks, remote.tasks);
+          tasks = merged.tasks;
+          syncLocalBase = cloneTasks(remote.tasks);
           cloudUpdatedAt = remote.updatedAt ?? null;
-          data = await cloudRequest({
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tasks: tasksToSave, expectedUpdatedAt: cloudUpdatedAt }),
-          });
-          toast(createdConflictCopy
-            ? "检测到同时编辑，已保留本机冲突副本"
-            : "检测到其他设备更新，已安全合并");
+          cacheTasks(tasks);
+          if (merged.hadConflicts) toast("检测到同时编辑，已合并修改；冲突字段保留本机版本");
+          continue;
         }
+        const accepted = Array.isArray(data.tasks) ? data.tasks : snapshot;
+        // Preserve edits made while this request was in flight, using exactly
+        // the submitted snapshot as their ancestor.
+        tasks = mergeConcurrentChanges(snapshot, tasks, accepted).tasks;
+        syncLocalBase = cloneTasks(accepted);
         cloudUpdatedAt = data.updatedAt ?? null;
-        syncedTasks = cloneTasks(tasksToSave);
-        if (sameTask(tasks, snapshot)) {
-          if (!sameTask(tasks, tasksToSave)) {
-            tasks = cloneTasks(tasksToSave);
-            cacheTasks(tasks);
-            renderDaily();
-          }
-          syncLocalBase = cloneTasks(tasksToSave);
-          clearDirty();
-        } else {
-          syncLocalBase = cloneTasks(snapshot);
-          updateDirtyBase(syncLocalBase);
-        }
+        dirty = !sameTask(tasks, accepted);
+        cacheTasks(tasks);
         writeSyncMarker(data.updatedAt);
-        if (announce) toast("本机任务已安全同步到云端");
-        return data;
-      })
-      .catch((error) => {
-        if (error.message !== "unauthorized") {
-          toast("云端同步失败，数据仍安全保存在本机");
+        renderDaily();
+        if (!dirty) {
+          if (announce) toast("本机任务已同步到云端");
+          return data;
         }
-        return null;
-      });
+      }
+      throw new Error("sync busy");
+    }).catch((error) => {
+      dirty = true;
+      cacheTasks(tasks);
+      if (error.message !== "unauthorized") {
+        const status = error.status ? `（${error.status}）` : "";
+        toast(localCacheSaved ? `云端同步失败${status}，修改已保存在本机，将自动重试`
+          : `云端同步失败${status}，本机存储也不可用，请保留当前页面`);
+      }
+      return null;
+    });
     return syncQueue;
   }
 
   function save() {
-    cacheTasks(tasks);
     markDirty();
     syncTasks(tasks);
   }
 
-  async function loadCloudTasks() {
-    try {
-      const bootstrap = window.__lexiCloudTasksPromise;
-      const data = bootstrap ? await bootstrap : await cloudRequest();
-      if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
-
-      const cloudTasks = data.tasks;
-      const localTasks = tasks.slice();
-      cloudUpdatedAt = data.updatedAt ?? null;
-      syncedTasks = cloneTasks(cloudTasks);
-      const hasDirtyCache = hasUnsyncedChanges();
-      syncLocalBase = hasDirtyCache ? cloneTasks(readDirtyBase()) : cloneTasks(cloudTasks);
-      const needsLegacyMigration = localTasks.length > 0 && !readSyncMarker();
-
-      if (hasDirtyCache) {
-        tasks = localTasks;
-        renderDaily();
-        await syncTasks(tasks, { announce: true });
-        return;
-      }
-
-      if (needsLegacyMigration) {
-        const merged = new Map(cloudTasks.map((task) => [task.id, task]));
-        localTasks.forEach((task) => merged.set(task.id, task));
-        tasks = Array.from(merged.values());
-        cacheTasks(tasks);
-        markDirty(cloudTasks);
-        renderDaily();
-        await syncTasks(tasks, { announce: true });
-        return;
-      }
-
-      tasks = cloudTasks;
-      syncedTasks = cloneTasks(cloudTasks);
-      syncLocalBase = cloneTasks(cloudTasks);
-      cacheTasks(tasks);
-      if (data.updatedAt) writeSyncMarker(data.updatedAt);
-      renderDaily();
-    } catch (e) {
-      if (e.message !== "unauthorized") {
-        toast("当前使用本机缓存，恢复连接后可继续同步");
-      }
-    }
-  }
-
   async function refreshCloudTasks(renderView) {
     try {
-      // 先等待本机尚未完成的保存，避免刚编辑的数据被较旧的云端结果覆盖。
       await syncQueue;
-      if (hasUnsyncedChanges()) {
-        await syncTasks(tasks);
-        if (hasUnsyncedChanges()) {
-          toast("本机仍有尚未同步的数据，已保留本机版本");
-          renderView();
-          return;
-        }
-      }
-      const data = await cloudRequest();
-      if (!Array.isArray(data.tasks)) throw new Error("invalid cloud data");
-
-      tasks = data.tasks;
-      syncedTasks = cloneTasks(data.tasks);
-      syncLocalBase = cloneTasks(data.tasks);
-      cloudUpdatedAt = data.updatedAt ?? null;
-      cacheTasks(tasks);
-      if (data.updatedAt) writeSyncMarker(data.updatedAt);
-    } catch (e) {
-      if (e.message !== "unauthorized") {
-        toast("最新数据刷新失败，已显示本机缓存");
-      }
+      if (dirty) await syncTasks(tasks);
+      if (!dirty) await loadCloudTasks();
+      else toast("本机仍有尚未同步的修改，已保留当前数据");
+    } catch (error) {
+      if (error.message !== "unauthorized") toast("最新数据刷新失败，已显示本机缓存");
     }
     renderView();
   }
+
+  window.addEventListener("online", () => { if (dirty) syncTasks(tasks, { announce: true }); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && dirty) syncTasks(tasks);
+  });
+
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   /* -------------------- 通用工具 -------------------- */
@@ -1297,6 +1261,8 @@
     try { els.userName.value = localStorage.getItem(NAME_KEY) || ""; } catch {}
     setUrgency("medium");
     renderHome();
-    loadCloudTasks();
+    loadCloudTasks().then(() => { if (dirty) syncTasks(tasks); }).catch((error) => {
+      if (error.message !== "unauthorized") toast("当前使用本机缓存，恢复连接后可继续同步");
+    });
   })();
 })();

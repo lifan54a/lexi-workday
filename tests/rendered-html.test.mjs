@@ -189,6 +189,82 @@ test("task writes reject executable document links", async () => {
   assert.equal(response.status, 400);
 });
 
+test("failed storage writes return a structured error instead of escaping the handler", async () => {
+  class FailingStore extends BlobStore {
+    async setJSON() { throw new Error("simulated storage failure"); }
+  }
+  const response = await tasksRequest({
+    request: await authorizedRequest("PUT", { tasks: [validTask()], expectedUpdatedAt: null }),
+    env: { SESSION_SECRET: secret, LEXI_KV: emptyLegacyStore, LEXI_BLOB: new FailingStore() },
+  });
+  assert.equal(response.status, 503);
+  const result = await response.json();
+  assert.equal(result.code, "SYNC_FAILED");
+  assert.equal(result.stage, "write");
+  assert.equal(typeof result.requestId, "string");
+});
+
+test("saving a long history reuses reads and stays within an edge request budget", async () => {
+  class LimitedStore extends BlobStore {
+    async get(key) {
+      if (this.getCalls >= 64) throw new Error("subrequest limit exceeded");
+      return super.get(key);
+    }
+  }
+  const blob = new LimitedStore();
+  for (let index = 0; index < 50; index += 1) {
+    const id = `${Date.now()}_${String(index).padStart(32, "0")}`;
+    blob.values.set(`operations/${id}.json`, { id, changes: [] });
+  }
+  const env = { SESSION_SECRET: secret, LEXI_KV: emptyLegacyStore, LEXI_BLOB: blob };
+  const state = await (await tasksRequest({request: await authorizedRequest("GET"), env})).json();
+  blob.getCalls = 0;
+  const response = await tasksRequest({request: await authorizedRequest("PUT", {
+    tasks: [validTask()], expectedUpdatedAt: state.updatedAt,
+  }), env});
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).tasks, [validTask()]);
+  assert.ok(blob.getCalls < 64);
+});
+
+test("maintenance failure does not turn a committed write into a failed save", async () => {
+  class MaintenanceFailureStore extends BlobStore {
+    async setJSON(key, value, options) {
+      if (key.startsWith("snapshots/")) throw new Error("snapshot unavailable");
+      return super.setJSON(key, value, options);
+    }
+  }
+  const blob = new MaintenanceFailureStore();
+  for (let index = 0; index < 8; index += 1) {
+    const id = `${Date.now() - 600000}_${String(index).padStart(32, "0")}`;
+    blob.values.set(`operations/${id}.json`, {id, changes: []});
+  }
+  const env = { SESSION_SECRET: secret, LEXI_KV: emptyLegacyStore, LEXI_BLOB: blob };
+  const state = await (await tasksRequest({request: await authorizedRequest("GET"), env})).json();
+  const response = await tasksRequest({request: await authorizedRequest("PUT", {
+    tasks: [validTask()], expectedUpdatedAt: state.updatedAt,
+  }), env});
+  assert.equal(response.status, 200);
+  const saved = await (await tasksRequest({request: await authorizedRequest("GET"),env})).json();
+  assert.deepEqual(saved.tasks, [validTask()]);
+});
+
+test("a stale device cannot reinsert a deleted task even with the current version", async () => {
+  const blob = new BlobStore();
+  const env = {SESSION_SECRET: secret, LEXI_KV: emptyLegacyStore, LEXI_BLOB: blob};
+  const added = await (await tasksRequest({request:await authorizedRequest("PUT", {
+    tasks:[validTask()],expectedUpdatedAt:null,
+  }),env})).json();
+  const deleted = await (await tasksRequest({request:await authorizedRequest("PUT", {
+    tasks:[],expectedUpdatedAt:added.updatedAt,
+  }),env})).json();
+  const stale = await tasksRequest({request:await authorizedRequest("PUT", {
+    tasks:[validTask()],expectedUpdatedAt:deleted.updatedAt,
+  }),env});
+  assert.equal(stale.status,200);
+  assert.deepEqual((await stale.json()).tasks,[]);
+});
+
 test("task writes reject impossible calendar dates", async () => {
   const response = await tasksRequest({
     request: await authorizedRequest("PUT", {
@@ -248,7 +324,7 @@ test("the current page and offline bootstrap replace the disposable starter", as
   assert.match(page, /<LegacyHome \/>/);
   assert.match(layout, /Lexi's workday/);
   assert.match(bootstrap, /showPage\(\);\s*throw error;/);
-  assert.match(legacyApp, /mergeConcurrentChanges\(syncLocalBase, snapshot, syncedTasks\)/);
+  assert.match(legacyApp, /mergeConcurrentChanges\(syncLocalBase, tasks, remote.tasks\)/);
   assert.match(legacyApp, /hasUnsyncedChanges\(\)/);
   assert.match(legacyApp, /const byProject = new Map\(\)/);
   assert.match(pixelBlast, /IntersectionObserver/);

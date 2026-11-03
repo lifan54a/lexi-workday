@@ -50,7 +50,7 @@ export default function LegacyHome() {
     legacyWindow.gsap = gsap;
     document.documentElement.classList.add("gsap-ready");
     const script = document.createElement("script");
-    script.src = "/legacy/app.js";
+    script.src = "/legacy/app.js?v=20261103-sync2";
     script.async = false;
     script.dataset.legacyApp = "true";
     document.body.appendChild(script);

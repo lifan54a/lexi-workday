@@ -4,7 +4,7 @@ const encoder = new TextEncoder();
 const TASKS_KEY = "tasks";
 const OPERATION_PREFIX = "operations/";
 const SNAPSHOT_PREFIX = "snapshots/";
-const COMPACTION_THRESHOLD = 100;
+const COMPACTION_THRESHOLD = 8;
 const COMPACTION_GRACE_MS = 5 * 60 * 1000;
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const SESSION_TOKEN_PURPOSE = "lexi-workday-edgeone-authorized";
@@ -17,7 +17,7 @@ function getLegacyStore(env) {
 }
 
 function getStateStore(env) {
-  return env?.LEXI_BLOB ?? getBlobStore("lexi-workday-state");
+  return env?.LEXI_BLOB ?? getBlobStore({ name: "lexi-workday-state", consistency: "strong" });
 }
 
 async function createSessionToken(secret, expiresAt) {
@@ -120,7 +120,11 @@ function clone(value) {
 }
 
 function sameTask(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const canonical = (value) => value && typeof value === "object"
+    ? Array.isArray(value) ? value.map(canonical)
+      : Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
 function taskChanges(beforeTasks, afterTasks) {
@@ -152,15 +156,15 @@ function applyOperation(tasks, operation) {
     }
     if (sameTask(current, change.after ?? undefined) || !change.after) continue;
     if (!current) {
-      merged.set(change.id, change.after);
+      if (change.before === null) merged.set(change.id, change.after);
       continue;
     }
-    const conflictId = `${change.id.slice(0, 72)}_conflict_${operation.id.slice(-32)}`;
-    merged.set(conflictId, {
-      ...change.after,
-      id: conflictId,
-      project: `${change.after.project}（并发冲突副本）`.slice(0, 60),
-    });
+    // Merge fields of the same record instead of manufacturing a new task ID.
+    const combined = { ...current };
+    for (const field of Object.keys(change.after)) {
+      if (!sameTask(change.after[field], change.before?.[field])) combined[field] = change.after[field];
+    }
+    merged.set(change.id, combined);
   }
   return Array.from(merged.values());
 }
@@ -190,14 +194,14 @@ async function stateVersion(legacyVersion, operationKeys) {
     byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-async function readState(env) {
+async function readState(env, previous = null) {
   const legacyStore = getLegacyStore(env);
-  const legacy = parseLegacyState(legacyStore ? await legacyStore.get(TASKS_KEY) : null);
+  const legacy = previous?.legacy ?? parseLegacyState(legacyStore ? await legacyStore.get(TASKS_KEY) : null);
   const stateStore = getStateStore(env);
   const snapshotKeys = await listKeys(stateStore, SNAPSHOT_PREFIX);
   const snapshots = await Promise.all(snapshotKeys.map(async (key) => ({
     key,
-    value: await stateStore.get(key, { type: "json", consistency: "strong" }),
+    value: previous?.snapshotValues?.get(key) ?? await stateStore.get(key, { type: "json", consistency: "strong" }),
   })));
   for (const snapshot of snapshots) {
     const value = snapshot.value;
@@ -212,15 +216,24 @@ async function readState(env) {
   const throughKey = latestSnapshot?.value.throughKey ?? "";
   const allOperationKeys = await listKeys(stateStore, OPERATION_PREFIX);
   const operationKeys = allOperationKeys.filter((key) => key > throughKey);
+  const previousOperations = new Map(previous?.operations?.map((operation) => [operation.key, operation.value]) ?? []);
   const operations = await Promise.all(operationKeys.map(async (key) => ({
     key,
-    value: await stateStore.get(key, { type: "json", consistency: "strong" }),
+    value: previousOperations.get(key) ?? await stateStore.get(key, { type: "json", consistency: "strong" }),
   })));
-  const tasks = operations.reduce((current, operation) => applyOperation(current, operation.value), baseTasks);
+  const deletedIds = new Set(latestSnapshot?.value.deletedIds ?? []);
+  for (const operation of operations) {
+    for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
+  }
+  const tasks = operations.reduce((current, operation) => applyOperation(current, operation.value), baseTasks)
+    .filter((task) => !deletedIds.has(task.id));
   if (!areValidTasks(tasks, true)) throw new Error("materialized task data is invalid");
   const versionSeed = latestSnapshot ? `snapshot:${latestSnapshot.key}` : legacy.updatedAt;
   return {
     tasks,
+    deletedIds,
+    legacy,
+    snapshotValues: new Map(snapshots.map((snapshot) => [snapshot.key, snapshot.value])),
     updatedAt: await stateVersion(versionSeed, operationKeys),
     baseTasks,
     latestSnapshot,
@@ -245,7 +258,9 @@ async function compactState(current) {
     const coveredKeys = current.allOperationKeys.filter((key) =>
       key <= current.latestSnapshot.value.throughKey);
     const oldSnapshots = current.snapshotKeys.filter((key) => key !== current.latestSnapshot.key);
-    await Promise.all([...coveredKeys, ...oldSnapshots].map((key) => current.stateStore.delete(key)));
+    // Bound maintenance work per request; an unbounded delete burst can exhaust
+    // the edge runtime's subrequest budget after the business write committed.
+    await Promise.all([...coveredKeys, ...oldSnapshots].slice(0, 8).map((key) => current.stateStore.delete(key)));
   }
 
   if (current.operationKeys.length < COMPACTION_THRESHOLD) return false;
@@ -258,16 +273,25 @@ async function compactState(current) {
     current.baseTasks,
   );
   const throughKey = compactable.at(-1).key;
+  const deletedIds = new Set(current.latestSnapshot?.value.deletedIds ?? []);
+  for (const operation of compactable) {
+    for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
+  }
   const snapshotKey = `${SNAPSHOT_PREFIX}${String(now).padStart(13, "0")}_${crypto.randomUUID().replaceAll("-", "")}.json`;
   await current.stateStore.setJSON(
     snapshotKey,
-    { tasks, throughKey, createdAt: now },
+    { tasks: tasks.filter((task) => !deletedIds.has(task.id)), deletedIds: [...deletedIds], throughKey, createdAt: now },
     { onlyIfNew: true },
   );
   return true;
 }
 
 export async function onRequest({ request, env }) {
+  const random = new Uint8Array(16);
+  crypto.getRandomValues(random);
+  const requestId = Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  let stage = "authorize";
+  try {
   if (!(await isAuthorized(request, env))) {
     return json({ error: "unauthorized" }, 401);
   }
@@ -276,8 +300,9 @@ export async function onRequest({ request, env }) {
     try {
       const { tasks, updatedAt } = await readState(env);
       return json({ tasks, updatedAt });
-    } catch {
-      return json({ error: "stored task data is invalid" }, 500);
+    } catch (error) {
+      console.error("Task read failed", { requestId, code: error?.code, message: error?.message });
+      return json({ error: "task read failed", code: "READ_FAILED", requestId }, 503);
     }
   }
 
@@ -305,20 +330,43 @@ export async function onRequest({ request, env }) {
       return json({ error: "task state changed", tasks: current.tasks, updatedAt: current.updatedAt }, 409);
     }
 
-    const changes = taskChanges(current.tasks, body.tasks);
-    if (changes.length === 0) return json({ ok: true, updatedAt: current.updatedAt });
+    const currentIds = new Set(current.tasks.map((task) => task.id));
+    if (body.tasks.some((task) => !currentIds.has(task.id) && !current.deletedIds.has(task.id)
+      && /（(?:本机|并发)冲突副本）/.test(task.project))) {
+      return json({ error: "refresh required", code: "LEGACY_CLIENT", tasks: current.tasks, updatedAt: current.updatedAt }, 409);
+    }
 
-    const operationId = `${String(Date.now()).padStart(13, "0")}_${crypto.randomUUID().replaceAll("-", "")}`;
+    // Old tabs/devices can upload records which were deliberately removed.
+    // Persist deletion tombstones through compaction so they cannot resurrect.
+    const desiredTasks = body.tasks.filter((task) => !current.deletedIds.has(task.id));
+    const changes = taskChanges(current.tasks, desiredTasks);
+    if (changes.length === 0) return json({ ok: true, tasks: current.tasks, updatedAt: current.updatedAt });
+
+    const previousKey = current.operationKeys.at(-1) ?? current.latestSnapshot?.value.throughKey;
+    const timestamp = Math.max(Date.now(), previousKey ? operationTimestamp(previousKey) + 1 : 0);
+    const operationId = `${String(timestamp).padStart(13, "0")}_${requestId}`;
     const operationKey = `${OPERATION_PREFIX}${operationId}.json`;
+    stage = "write";
     await current.stateStore.setJSON(
       operationKey,
       { id: operationId, changes },
       { onlyIfNew: true },
     );
-    let finalState = await readState(env);
-    if (await compactState(finalState)) finalState = await readState(env);
-    return json({ ok: true, updatedAt: finalState.updatedAt });
+    // Reuse already-read history. Reading every operation a second time can
+    // exceed the edge subrequest limit while GET still works normally.
+    stage = "read-after-write";
+    let finalState = await readState(env, current);
+    try {
+      if (await compactState(finalState)) finalState = await readState(env, finalState);
+    } catch (error) {
+      console.error("Task history maintenance failed", { requestId, code: error?.code, message: error?.message });
+    }
+    return json({ ok: true, tasks: finalState.tasks, updatedAt: finalState.updatedAt });
   }
 
   return json({ error: "method not allowed" }, 405, { allow: "GET, PUT" });
+  } catch (error) {
+    console.error("Task sync failed", { requestId, stage, code: error?.code, message: error?.message });
+    return json({ error: "task sync failed", code: "SYNC_FAILED", stage, requestId }, 503);
+  }
 }
