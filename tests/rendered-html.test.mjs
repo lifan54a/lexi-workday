@@ -7,8 +7,8 @@ import {
   isSessionTokenValid,
   loginPage,
   onRequest as loginRequest,
-} from "../edgeone/edge-functions/login.js";
-import { onRequest as tasksRequest } from "../edgeone/edge-functions/api/tasks.js";
+} from "../edgeone/cloud-functions/login.js";
+import { onRequest as tasksRequest } from "../edgeone/cloud-functions/api/tasks.js";
 import { middleware } from "../edgeone/middleware.js";
 
 const root = new URL("../", import.meta.url);
@@ -263,6 +263,37 @@ test("a stale device cannot reinsert a deleted task even with the current versio
   }),env});
   assert.equal(stale.status,200);
   assert.deepEqual((await stale.json()).tasks,[]);
+});
+
+test("deletion tombstones survive operation history compaction", async () => {
+  const blob = new BlobStore();
+  const old = Date.now() - 600000;
+  for (let index = 0; index < 8; index += 1) {
+    const id = `${old + index}_${String(index).padStart(32, "0")}`;
+    const changes = index === 0 ? [{id:"task-1",before:null,after:validTask()}]
+      : index === 1 ? [{id:"task-1",before:validTask(),after:null}] : [];
+    blob.values.set(`operations/${id}.json`,{id,changes});
+  }
+  const env = {SESSION_SECRET:secret,LEXI_KV:emptyLegacyStore,LEXI_BLOB:blob};
+  const before = await (await tasksRequest({request:await authorizedRequest("GET"),env})).json();
+  const added = await (await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask({id:"task-2"})],expectedUpdatedAt:before.updatedAt,
+  }),env})).json();
+  assert.ok([...blob.values.keys()].some(key=>key.startsWith("snapshots/")));
+  const response = await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask(),validTask({id:"task-2"})],expectedUpdatedAt:added.updatedAt,
+  }),env});
+  assert.deepEqual((await response.json()).tasks,[validTask({id:"task-2"})]);
+});
+
+test("old clients cannot manufacture new conflict-copy task IDs", async () => {
+  const blob = new BlobStore();
+  const response = await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask({project:"排期台（本机冲突副本）"})],expectedUpdatedAt:null,
+  }),env:{SESSION_SECRET:secret,LEXI_KV:emptyLegacyStore,LEXI_BLOB:blob}});
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).code,"LEGACY_CLIENT");
+  assert.equal(blob.values.size,0);
 });
 
 test("task writes reject impossible calendar dates", async () => {

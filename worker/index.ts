@@ -1,7 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
-import { loginPage as loginPageHTML } from "../edgeone/edge-functions/login.js";
+import { loginPage as loginPageHTML } from "../edgeone/cloud-functions/login.js";
 
 interface Env {
   ASSETS: Fetcher;

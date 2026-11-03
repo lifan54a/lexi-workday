@@ -11,9 +11,18 @@ const SESSION_TOKEN_PURPOSE = "lexi-workday-edgeone-authorized";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const URGENCIES = new Set(["high", "medium", "low"]);
 
-function getLegacyStore(env) {
+function getLegacyStore(env, request) {
   if (typeof LEXI_KV !== "undefined") return LEXI_KV;
-  return env?.LEXI_KV;
+  if (env?.LEXI_KV) return env.LEXI_KV;
+  // KV is only available at the edge. Keep a read-only authenticated bridge
+  // until a durable Blob snapshot includes the original KV records.
+  return { async get() {
+    const response = await fetch(new URL("/api/legacy-tasks", request.url), {
+      headers: { cookie: request.headers.get("cookie") ?? "" }, cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Legacy task read failed (${response.status})`);
+    return response.text();
+  } };
 }
 
 function getStateStore(env) {
@@ -70,6 +79,7 @@ function json(body, status = 200, extraHeaders = {}) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      "x-lexi-sync-version": "20261103-cloud1",
       ...extraHeaders,
     },
   });
@@ -194,9 +204,7 @@ async function stateVersion(legacyVersion, operationKeys) {
     byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-async function readState(env, previous = null) {
-  const legacyStore = getLegacyStore(env);
-  const legacy = previous?.legacy ?? parseLegacyState(legacyStore ? await legacyStore.get(TASKS_KEY) : null);
+async function readState(env, previous = null, request) {
   const stateStore = getStateStore(env);
   const snapshotKeys = await listKeys(stateStore, SNAPSHOT_PREFIX);
   const snapshots = await Promise.all(snapshotKeys.map(async (key) => ({
@@ -212,6 +220,8 @@ async function readState(env, previous = null) {
   }
   const latestSnapshot = snapshots.sort((left, right) =>
     left.value.throughKey.localeCompare(right.value.throughKey) || left.key.localeCompare(right.key)).at(-1) ?? null;
+  const legacy = latestSnapshot ? { tasks: [], updatedAt: null }
+    : previous?.legacy ?? parseLegacyState(await getLegacyStore(env, request).get(TASKS_KEY));
   const baseTasks = latestSnapshot ? latestSnapshot.value.tasks : legacy.tasks;
   const throughKey = latestSnapshot?.value.throughKey ?? "";
   const allOperationKeys = await listKeys(stateStore, OPERATION_PREFIX);
@@ -298,11 +308,11 @@ export async function onRequest({ request, env }) {
 
   if (request.method === "GET") {
     try {
-      const { tasks, updatedAt } = await readState(env);
+      const { tasks, updatedAt } = await readState(env, null, request);
       return json({ tasks, updatedAt });
     } catch (error) {
       console.error("Task read failed", { requestId, code: error?.code, message: error?.message });
-      return json({ error: "task read failed", code: "READ_FAILED", requestId }, 503);
+      return json({ error: "task read failed", code: "READ_FAILED", requestId, causeCode: error?.code ?? error?.name }, 503);
     }
   }
 
@@ -322,7 +332,7 @@ export async function onRequest({ request, env }) {
 
     let current;
     try {
-      current = await readState(env);
+      current = await readState(env, null, request);
     } catch {
       return json({ error: "stored task data is invalid" }, 500);
     }
@@ -355,9 +365,9 @@ export async function onRequest({ request, env }) {
     // Reuse already-read history. Reading every operation a second time can
     // exceed the edge subrequest limit while GET still works normally.
     stage = "read-after-write";
-    let finalState = await readState(env, current);
+    let finalState = await readState(env, current, request);
     try {
-      if (await compactState(finalState)) finalState = await readState(env, finalState);
+      if (await compactState(finalState)) finalState = await readState(env, finalState, request);
     } catch (error) {
       console.error("Task history maintenance failed", { requestId, code: error?.code, message: error?.message });
     }

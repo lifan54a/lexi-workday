@@ -188,7 +188,7 @@ function safeEqual(left, right) {
 }
 
 function getAuthStore(env) {
-  return env.LEXI_AUTH_BLOB ?? getBlobStore("lexi-workday-auth");
+  return env.LEXI_AUTH_BLOB ?? getBlobStore({ name: "lexi-workday-auth", consistency: "strong" });
 }
 
 async function clientKey(request, secret) {
