@@ -12,7 +12,8 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const URGENCIES = new Set(["high", "medium", "low"]);
 
 function getLegacyStore(env, request) {
-  if (typeof LEXI_KV !== "undefined") return LEXI_KV;
+  // Never use the edge-only global KV binding from a Node function. Even if a
+  // compatibility shim exposes it, its RPC is not a supported Node data path.
   if (env?.LEXI_KV) return env.LEXI_KV;
   // KV is only available at the edge. Keep a read-only authenticated bridge
   // until a durable Blob snapshot includes the original KV records.
@@ -246,7 +247,7 @@ async function readState(env, previous = null, request) {
   const latestSnapshot = snapshots.sort((left, right) =>
     left.value.throughKey.localeCompare(right.value.throughKey) || left.key.localeCompare(right.key)).at(-1) ?? null;
   const legacy = latestSnapshot ? { tasks: [], updatedAt: null }
-    : previous?.legacy ?? parseLegacyState(await getLegacyStore(env, request).get(TASKS_KEY));
+    : previous?.legacy ?? parseLegacyState(await storageCall(getLegacyStore(env, request).get(TASKS_KEY), "legacy:get"));
   const baseTasks = latestSnapshot ? latestSnapshot.value.tasks : legacy.tasks;
   const throughKey = latestSnapshot?.value.throughKey ?? "";
   const allOperationKeys = await listKeys(stateStore, OPERATION_PREFIX);
