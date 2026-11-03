@@ -227,6 +227,31 @@ test("saving a long history reuses reads and stays within an edge request budget
   assert.ok(blob.getCalls < 64);
 });
 
+test("history loading bounds simultaneous Blob requests", async () => {
+  class ConnectionLimitedStore extends BlobStore {
+    active=0;
+    maximum=0;
+    async get(key) {
+      this.active+=1;
+      this.maximum=Math.max(this.maximum,this.active);
+      try {
+        if(this.active>4) throw new Error("too many simultaneous storage requests");
+        await new Promise(resolve=>setTimeout(resolve,1));
+        return await super.get(key);
+      } finally {this.active-=1;}
+    }
+  }
+  const blob=new ConnectionLimitedStore();
+  for(let index=0;index<61;index+=1){
+    const id=`${Date.now()}_${String(index).padStart(32,"0")}`;
+    blob.values.set(`operations/${id}.json`,{id,changes:[]});
+  }
+  const response=await tasksRequest({request:await authorizedRequest("GET"),
+    env:{SESSION_SECRET:secret,LEXI_KV:emptyLegacyStore,LEXI_BLOB:blob}});
+  assert.equal(response.status,200);
+  assert.ok(blob.maximum<=4);
+});
+
 test("maintenance failure does not turn a committed write into a failed save", async () => {
   class MaintenanceFailureStore extends BlobStore {
     async setJSON(key, value, options) {

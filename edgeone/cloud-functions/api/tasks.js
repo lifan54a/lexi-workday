@@ -209,6 +209,16 @@ async function storageCall(promise, stage) {
   } finally { clearTimeout(timer); }
 }
 
+async function readInBatches(keys, read) {
+  const results = [];
+  // A large Promise.all fan-out can overwhelm the Blob credential service and
+  // outbound connection pool. Bound it even when the history is still small.
+  for (let start = 0; start < keys.length; start += 4) {
+    results.push(...await Promise.all(keys.slice(start, start + 4).map(read)));
+  }
+  return results;
+}
+
 async function stateVersion(legacyVersion, operationKeys) {
   if (operationKeys.length === 0) return legacyVersion;
   const digest = await crypto.subtle.digest(
@@ -222,10 +232,10 @@ async function stateVersion(legacyVersion, operationKeys) {
 async function readState(env, previous = null, request) {
   const stateStore = getStateStore(env);
   const snapshotKeys = await listKeys(stateStore, SNAPSHOT_PREFIX);
-  const snapshots = await Promise.all(snapshotKeys.map(async (key) => ({
+  const snapshots = await readInBatches(snapshotKeys, async (key) => ({
     key,
     value: previous?.snapshotValues?.get(key) ?? await storageCall(stateStore.get(key, { type: "json", consistency: "strong" }), "snapshot:get"),
-  })));
+  }));
   for (const snapshot of snapshots) {
     const value = snapshot.value;
     if (!value || !areValidTasks(value.tasks, true) || typeof value.throughKey !== "string"
@@ -242,10 +252,10 @@ async function readState(env, previous = null, request) {
   const allOperationKeys = await listKeys(stateStore, OPERATION_PREFIX);
   const operationKeys = allOperationKeys.filter((key) => key > throughKey);
   const previousOperations = new Map(previous?.operations?.map((operation) => [operation.key, operation.value]) ?? []);
-  const operations = await Promise.all(operationKeys.map(async (key) => ({
+  const operations = await readInBatches(operationKeys, async (key) => ({
     key,
     value: previousOperations.get(key) ?? await storageCall(stateStore.get(key, { type: "json", consistency: "strong" }), "operation:get"),
-  })));
+  }));
   const deletedIds = new Set(latestSnapshot?.value.deletedIds ?? []);
   for (const operation of operations) {
     for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
