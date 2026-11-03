@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@edgeone/pages-blob':
-        specifier: 0.0.16
-        version: 0.0.16
+        specifier: 0.0.18
+        version: 0.0.18
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2
@@ -214,8 +214,8 @@ packages:
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
 
-  '@edgeone/pages-blob@0.0.16':
-    resolution: {integrity: sha512-Qk3SHTSvCF7awlKsG5t45FolHd8kVH44yJKeXM21qNq8A1I1mTGUuQWa+j4shwuBdgQTvRHTFBbQxAvKqiR22A==}
+  '@edgeone/pages-blob@0.0.18':
+    resolution: {integrity: sha512-5fpA33ECm/kMaUW5AfvGjyFHOotbhLmngdbbm49LEH1Ktz7E3dKfxHmNp/ubv2H83kqgV0886Az1JdUzie/TkQ==}
     engines: {node: '>=18.0.0'}
 
   '@emnapi/core@1.10.0':
@@ -3890,7 +3890,7 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
-  '@edgeone/pages-blob@0.0.16': {}
+  '@edgeone/pages-blob@0.0.18': {}
 
   '@emnapi/core@1.10.0':
     dependencies:

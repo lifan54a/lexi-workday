@@ -330,6 +330,6 @@ test("the current page and offline bootstrap replace the disposable starter", as
   assert.match(pixelBlast, /IntersectionObserver/);
   assert.match(pixelBlast, /forceContextLoss\(\)/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.match(packageJson, /"@edgeone\/pages-blob": "0\.0\.16"/);
+  assert.match(packageJson, /"@edgeone\/pages-blob": "0\.0\.18"/);
   await assert.rejects(readFile(new URL("app\/_sites-preview\/SkeletonPreview.tsx", root)));
 });
