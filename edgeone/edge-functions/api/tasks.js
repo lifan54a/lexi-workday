@@ -367,6 +367,8 @@ export async function onRequest({ request, env }) {
   return json({ error: "method not allowed" }, 405, { allow: "GET, PUT" });
   } catch (error) {
     console.error("Task sync failed", { requestId, stage, code: error?.code, message: error?.message });
-    return json({ error: "task sync failed", code: "SYNC_FAILED", stage, requestId }, 503);
+    const storageStatus = Number(/COS returned (\d+)/.exec(error?.message ?? "")?.[1]) || undefined;
+    return json({ error: "task sync failed", code: "SYNC_FAILED", stage, requestId,
+      causeCode: error?.code ?? error?.name, storageStatus }, 503);
   }
 }
