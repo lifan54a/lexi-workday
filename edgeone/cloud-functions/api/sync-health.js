@@ -23,11 +23,22 @@ export async function onRequest({ request, env }) {
   const started=Date.now();
   let timer;
   try {
+    const store=getStore({name:"lexi-workday-state",consistency:"strong"});
+    const prefix=new URL(request.url).searchParams.has("operations") ? "operations/" : "snapshots/";
     const result=await Promise.race([
-      getStore({name:"lexi-workday-state",consistency:"strong"}).list({prefix:"snapshots/"}),
+      store.list({prefix,paginate:false}),
       new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("storage probe timeout")),6000);}),
     ]);
-    probes.push({name:"blob-list",count:result.blobs.length,milliseconds:Date.now()-started});
+    probes.push({name:"blob-list",prefix,count:result.blobs.length,hasMore:!!result.cursor,milliseconds:Date.now()-started});
+    if (result.blobs.length && new URL(request.url).searchParams.has("readOne")) {
+      const readStarted=Date.now();
+      clearTimeout(timer);
+      const value=await Promise.race([
+        store.get(result.blobs[0].key,{type:"json",consistency:"strong"}),
+        new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("object probe timeout")),6000);}),
+      ]);
+      probes.push({name:"blob-get",present:!!value,milliseconds:Date.now()-readStarted});
+    }
   } catch(error) {probes.push({name:"blob-list",error:error?.code??error?.name,milliseconds:Date.now()-started});}
   finally {clearTimeout(timer);}
   return Response.json({probes,host:new URL(request.url).host},{headers:{"cache-control":"no-store"}});
