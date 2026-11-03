@@ -342,6 +342,29 @@ test("cleanup rejects stale clients even after they learn the latest state versi
   assert.equal(current.status,200);
 });
 
+test("an explicit cleanup can restore a backed-up keeper without reopening stale client writes",async()=>{
+  const blob=new BlobStore();
+  const env={SESSION_SECRET:secret,LEXI_KV:emptyLegacyStore,LEXI_BLOB:blob};
+  const added=await(await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask()],expectedUpdatedAt:null,
+  }),env})).json();
+  const removed=await(await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[],expectedUpdatedAt:added.updatedAt,
+  }),env})).json();
+  const invalid=await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask()],expectedUpdatedAt:removed.updatedAt,restoredIds:["task-1"],
+  }),env});
+  assert.equal(invalid.status,400);
+  const restored=await tasksRequest({request:await authorizedRequest("PUT",{
+    tasks:[validTask()],expectedUpdatedAt:removed.updatedAt,clientVersion:2,
+    cleanupEpoch:"approved-cleanup",restoredIds:["task-1"],
+  }),env});
+  assert.equal(restored.status,200);
+  assert.deepEqual((await restored.json()).tasks,[validTask()]);
+  const state=await(await tasksRequest({request:await authorizedRequest("GET"),env})).json();
+  assert.deepEqual(state.tasks,[validTask()]);
+});
+
 test("task writes reject impossible calendar dates", async () => {
   const response = await tasksRequest({
     request: await authorizedRequest("PUT", {

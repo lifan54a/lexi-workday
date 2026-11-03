@@ -262,6 +262,7 @@ async function readState(env, previous = null, request) {
   for (const operation of operations) {
     if (typeof operation.value.repairEpoch === "string") repairEpoch = operation.value.repairEpoch;
     for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
+    if (operation.value.repairEpoch) for (const id of operation.value.restoredIds ?? []) deletedIds.delete(id);
   }
   const tasks = operations.reduce((current, operation) => applyOperation(current, operation.value), baseTasks)
     .filter((task) => !deletedIds.has(task.id));
@@ -317,6 +318,7 @@ async function compactState(current) {
   for (const operation of compactable) {
     if (typeof operation.value.repairEpoch === "string") repairEpoch = operation.value.repairEpoch;
     for (const change of operation.value.changes) if (change.after === null) deletedIds.add(change.id);
+    if (operation.value.repairEpoch) for (const id of operation.value.restoredIds ?? []) deletedIds.delete(id);
   }
   const snapshotKey = `${SNAPSHOT_PREFIX}${String(now).padStart(13, "0")}_${crypto.randomUUID().replaceAll("-", "")}.json`;
   await current.stateStore.setJSON(
@@ -370,6 +372,10 @@ export async function onRequest({ request, env }) {
       || typeof body.cleanupEpoch !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(body.cleanupEpoch))) {
       return json({ error: "invalid cleanup version" }, 400);
     }
+    if (body.restoredIds !== undefined && (!body.cleanupEpoch || !Array.isArray(body.restoredIds)
+      || body.restoredIds.some((id) => typeof id !== "string" || !body.tasks.some((task) => task.id === id)))) {
+      return json({ error: "restoration requires an explicit cleanup version" }, 400);
+    }
 
     let current;
     try {
@@ -392,7 +398,8 @@ export async function onRequest({ request, env }) {
 
     // Old tabs/devices can upload records which were deliberately removed.
     // Persist deletion tombstones through compaction so they cannot resurrect.
-    const desiredTasks = body.tasks.filter((task) => !current.deletedIds.has(task.id));
+    const restoredIds = new Set(body.restoredIds ?? []);
+    const desiredTasks = body.tasks.filter((task) => !current.deletedIds.has(task.id) || restoredIds.has(task.id));
     const changes = taskChanges(current.tasks, desiredTasks);
     if (changes.length === 0 && !body.cleanupEpoch) return json({ ok: true, ...publicState(current) });
 
@@ -403,7 +410,7 @@ export async function onRequest({ request, env }) {
     stage = "write";
     await storageCall(current.stateStore.setJSON(
       operationKey,
-      { id: operationId, changes, ...(body.cleanupEpoch ? { repairEpoch: body.cleanupEpoch } : {}) },
+      { id: operationId, changes, ...(body.cleanupEpoch ? { repairEpoch: body.cleanupEpoch, restoredIds: [...restoredIds] } : {}) },
       { onlyIfNew: true },
     ), "write");
     // Reuse already-read history. Reading every operation a second time can
